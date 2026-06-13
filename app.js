@@ -24,7 +24,6 @@ let state = {
   doublePick: false,
   showPicked: true,
   searchQuery: '',
-  weights: { epa: 60, opr: 40, auto: 10, endgame: 10 }, // slider display only
 };
 
 // ─── DOM helpers ──────────────────────────────────────────────────────────────
@@ -446,44 +445,6 @@ async function fetchFromPastedList() {
   }
 }
 
-// ─── Score Calculation ────────────────────────────────────────────────────────
-function calcScores(teams) {
-  const w = state.weights;
-  const totalWeight = (w.epa + w.opr + w.auto + w.endgame) || 1;
-
-  function normalise(arr) {
-    const valid = arr.filter(v => v !== null && !isNaN(v));
-    if (!valid.length) return arr.map(() => 0);
-    const mn = Math.min(...valid);
-    const mx = Math.max(...valid);
-    if (mx === mn) return arr.map(v => v === null ? 0 : 0.5);
-    return arr.map(v => v === null ? 0 : (v - mn) / (mx - mn));
-  }
-
-  const normEpa     = normalise(teams.map(t => t.epa));
-  const normOpr     = normalise(teams.map(t => t.opr));
-  const normAuto    = normalise(teams.map(t => t.auto));
-  const normEndgame = normalise(teams.map(t => t.endgame));
-
-  teams.forEach((t, i) => {
-    t.score = (
-      normEpa[i]     * w.epa     +
-      normOpr[i]     * w.opr     +
-      normAuto[i]    * w.auto    +
-      normEndgame[i] * w.endgame
-    ) / totalWeight * 100;
-  });
-}
-
-function recalcAndRender() {
-  if (!state.teams.length) return;
-  calcScores(state.teams);
-  if (state.sortCol === 'score') {
-    const mult = state.sortAsc ? 1 : -1;
-    state.teams.sort((a, b) => mult * (b.score - a.score));
-  }
-  renderTeams();
-}
 
 // ─── Rendering ────────────────────────────────────────────────────────────────
 function fmt(v, d = 1) {
@@ -900,31 +861,6 @@ function bindEvents() {
   $('loadFromListBtn').addEventListener('click', () => {
     closeSidebar();
     fetchFromPastedList();
-  });
-
-  // Recalculate scoring weights
-  $('recalcBtn').addEventListener('click', () => {
-    state.weights.epa     = +$('epaWeightSlider').value;
-    state.weights.opr     = +$('oprWeightSlider').value;
-    state.weights.auto    = +$('autoWeightSlider').value;
-    state.weights.endgame = +$('endgameWeightSlider').value;
-    saveSettings();
-    recalcAndRender();
-    showToast('Scores recalculated ✓', 'success');
-  });
-
-  // Live slider label update
-  [
-    ['epaWeightSlider',     'epaWeightVal',     'epa'],
-    ['oprWeightSlider',     'oprWeightVal',     'opr'],
-    ['autoWeightSlider',    'autoWeightVal',    'auto'],
-    ['endgameWeightSlider', 'endgameWeightVal', 'endgame'],
-  ].forEach(([sliderId, valId, key]) => {
-    $(sliderId).addEventListener('input', () => {
-      const v = +$(sliderId).value;
-      $(valId).textContent = v;
-      state.weights[key]   = v;
-    });
   });
 
   // Reset order to EPA ranking
