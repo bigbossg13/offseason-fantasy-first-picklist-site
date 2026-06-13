@@ -227,8 +227,10 @@ async function fetchData() {
         : 'No team data returned from Statbotics.');
     }
 
+    // Log first entry so we can inspect the actual response shape
+    console.log('[Statbotics] Sample entry shape:', JSON.stringify(sbData[0], null, 2));
+
     if (eventKey) {
-      // team_events shape: { team, team_name, epa: { total_points, auto, teleop, endgame } }
       sbData.forEach(te => {
         const num = te.team;
         epaMap[num] = {
@@ -236,7 +238,7 @@ async function fetchData() {
           auto:    te.epa?.auto?.mean          ?? null,
           teleop:  te.epa?.teleop?.mean        ?? null,
           endgame: te.epa?.endgame?.mean       ?? null,
-          name:    te.team_name || `Team ${num}`,
+          name:    te.team_name || te.name || `Team ${num}`,
         };
       });
     } else {
@@ -357,13 +359,24 @@ async function fetchEpaForNums(nums, year) {
     return Promise.allSettled(
       nums.map(num =>
         fetch(`${STATBOTICS_BASE}/team_year/${num}/${yr}`)
-          .then(r => r.ok ? r.json() : null)
-          .catch(() => null)
+          .then(r => {
+            if (!r.ok) { console.warn(`[Statbotics] ${num}/${yr} → HTTP ${r.status}`); return null; }
+            return r.json();
+          })
+          .catch(e => { console.error(`[Statbotics] ${num}/${yr} fetch error:`, e); return null; })
       )
     );
   }
 
   let results = await tryYear(year);
+  // Log the first successful result so we can inspect the shape
+  const firstResult = results.find(r => r.status === 'fulfilled' && r.value !== null);
+  if (firstResult) {
+    console.log('[Statbotics] Sample team_year response:', JSON.stringify(firstResult.value, null, 2));
+  } else {
+    console.warn('[Statbotics] All requests returned null for year', year);
+  }
+
   const hasData = results.some(r => r.status === 'fulfilled' && r.value?.epa?.total_points?.mean != null);
 
   // If no data for requested year, silently try the previous year
