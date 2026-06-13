@@ -422,12 +422,13 @@ async function fetchFromPastedList() {
       });
     });
 
-    // Sort by EPA descending, nulls last
-    teams.sort((a, b) => (b.epa ?? -Infinity) - (a.epa ?? -Infinity));
+    // Calculate composite scores then sort
+    calcScores(teams);
+    teams.sort((a, b) => b.score - a.score);
 
     state.teams          = teams;
     state.activeListName = null;
-    state.sortCol        = 'epa';
+    state.sortCol        = 'score';
     state.sortAsc        = false;
     localStorage.removeItem(LS_ACTIVE);
 
