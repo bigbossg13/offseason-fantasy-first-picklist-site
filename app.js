@@ -233,25 +233,14 @@ async function fetchData() {
     if (eventKey) {
       sbData.forEach(te => {
         const num = te.team;
-        epaMap[num] = {
-          epa:     te.epa?.total_points?.mean ?? null,
-          auto:    te.epa?.auto?.mean          ?? null,
-          teleop:  te.epa?.teleop?.mean        ?? null,
-          endgame: te.epa?.endgame?.mean       ?? null,
-          name:    te.team_name || te.name || `Team ${num}`,
-        };
+        const f = extractEpa(te);
+        epaMap[num] = { ...f, name: te.team_name || te.name || `Team ${num}` };
       });
     } else {
-      // teams shape: { team, nickname, epa: { total_points, auto, teleop, endgame } }
       sbData.forEach(t => {
         const num = t.team;
-        epaMap[num] = {
-          epa:     t.epa?.total_points?.mean ?? null,
-          auto:    t.epa?.auto?.mean          ?? null,
-          teleop:  t.epa?.teleop?.mean        ?? null,
-          endgame: t.epa?.endgame?.mean       ?? null,
-          name:    t.nickname || t.name || `Team ${num}`,
-        };
+        const f = extractEpa(t);
+        epaMap[num] = { ...f, name: t.nickname || t.name || `Team ${num}` };
       });
     }
 
@@ -352,9 +341,29 @@ async function fetchEventName(eventKey, tbaKey) {
   } catch (_) { return null; }
 }
 
+// ─── Extract EPA fields from a team_year API response (handles multiple API shapes) ──
+function extractEpa(d) {
+  if (!d) return { epa: null, auto: null, teleop: null, endgame: null };
+  // Statbotics v3 team_year: epa.total_points.mean / epa.auto.mean / epa.teleop.mean / epa.endgame.mean
+  // Fallback for breakdown sub-object naming
+  const epa     = d?.epa?.total_points?.mean
+                ?? d?.epa?.breakdown?.total_points?.mean
+                ?? d?.total_points_epa
+                ?? null;
+  const auto    = d?.epa?.auto?.mean
+                ?? d?.epa?.breakdown?.auto_points?.mean
+                ?? null;
+  const teleop  = d?.epa?.teleop?.mean
+                ?? d?.epa?.breakdown?.teleop_points?.mean
+                ?? null;
+  const endgame = d?.epa?.endgame?.mean
+                ?? d?.epa?.breakdown?.endgame_points?.mean
+                ?? null;
+  return { epa, auto, teleop, endgame };
+}
+
 // ─── Fetch EPA for a list of team numbers ─────────────────────────────────────
 async function fetchEpaForNums(nums, year) {
-  // Fetch team_year for requested year; fall back to previous year if all nulls
   async function tryYear(yr) {
     return Promise.allSettled(
       nums.map(num =>
@@ -369,22 +378,22 @@ async function fetchEpaForNums(nums, year) {
   }
 
   let results = await tryYear(year);
-  // Log the first successful result so we can inspect the shape
   const firstResult = results.find(r => r.status === 'fulfilled' && r.value !== null);
   if (firstResult) {
     console.log('[Statbotics] Sample team_year response:', JSON.stringify(firstResult.value, null, 2));
+    const extracted = extractEpa(firstResult.value);
+    console.log('[Statbotics] Extracted EPA fields:', extracted);
   } else {
     console.warn('[Statbotics] All requests returned null for year', year);
   }
 
-  const hasData = results.some(r => r.status === 'fulfilled' && r.value?.epa?.total_points?.mean != null);
+  const hasData = results.some(r => r.status === 'fulfilled' && extractEpa(r.value).epa != null);
 
-  // If no data for requested year, silently try the previous year
   if (!hasData && parseInt(year, 10) > 2018) {
     const fallbackYear = parseInt(year, 10) - 1;
     updateLoadingText(`No ${year} data — trying ${fallbackYear}…`);
     results = await tryYear(fallbackYear);
-    const hasFallback = results.some(r => r.status === 'fulfilled' && r.value?.epa?.total_points?.mean != null);
+    const hasFallback = results.some(r => r.status === 'fulfilled' && extractEpa(r.value).epa != null);
     if (hasFallback) {
       showToast(`No ${year} EPA data found — showing ${fallbackYear} data instead`, 'info');
     }
@@ -464,13 +473,14 @@ async function loadTeamsFromNums(nums, preserve = {}) {
       const num = nums[i];
       const d   = (result.status === 'fulfilled') ? result.value : null;
       const p   = preserve[num] || {};
+      const epaFields = extractEpa(d);
       teams.push({
         num,
         name:    d?.name || d?.team_name || d?.nickname || `Team ${num}`,
-        epa:     d?.epa?.total_points?.mean ?? null,
-        auto:    d?.epa?.auto?.mean         ?? null,
-        teleop:  d?.epa?.teleop?.mean       ?? null,
-        endgame: d?.epa?.endgame?.mean      ?? null,
+        epa:     epaFields.epa,
+        auto:    epaFields.auto,
+        teleop:  epaFields.teleop,
+        endgame: epaFields.endgame,
         opr:     oprMap[num] ?? null,
         notes:   p.notes   ?? '',
         picked:  p.picked  ?? false,
