@@ -62,10 +62,17 @@ document.addEventListener('DOMContentLoaded', () => {
   bindEvents();
   renderSavedLists();
 
-  // Restore last active list if stored
+  // Restore last active list — skip if it has no EPA data (stale/corrupt)
   const active = localStorage.getItem(LS_ACTIVE);
   if (active && state.savedLists[active]) {
-    loadList(active);
+    const saved = state.savedLists[active];
+    const hasEpa = saved.some(t => t.epa != null);
+    if (hasEpa) {
+      loadList(active);
+    } else {
+      // Stale list with no data — clear active pointer but keep the save
+      localStorage.removeItem(LS_ACTIVE);
+    }
   }
 
   // Initialise sortable on empty tbody (will re-init after data loads)
@@ -343,6 +350,36 @@ async function fetchEventName(eventKey, tbaKey) {
   } catch (_) { return null; }
 }
 
+// ─── Fetch EPA for a list of team numbers ─────────────────────────────────────
+async function fetchEpaForNums(nums, year) {
+  // Fetch team_year for requested year; fall back to previous year if all nulls
+  async function tryYear(yr) {
+    return Promise.allSettled(
+      nums.map(num =>
+        fetch(`${STATBOTICS_BASE}/team_year/${num}/${yr}`)
+          .then(r => r.ok ? r.json() : null)
+          .catch(() => null)
+      )
+    );
+  }
+
+  let results = await tryYear(year);
+  const hasData = results.some(r => r.status === 'fulfilled' && r.value?.epa?.total_points?.mean != null);
+
+  // If no data for requested year, silently try the previous year
+  if (!hasData && parseInt(year, 10) > 2018) {
+    const fallbackYear = parseInt(year, 10) - 1;
+    updateLoadingText(`No ${year} data — trying ${fallbackYear}…`);
+    results = await tryYear(fallbackYear);
+    const hasFallback = results.some(r => r.status === 'fulfilled' && r.value?.epa?.total_points?.mean != null);
+    if (hasFallback) {
+      showToast(`No ${year} EPA data found — showing ${fallbackYear} data instead`, 'info');
+    }
+  }
+
+  return results;
+}
+
 // ─── Paste-in Team List Fetch ─────────────────────────────────────────────────
 async function fetchFromPastedList() {
   const raw = $('pasteTeamInput').value.trim();
@@ -351,7 +388,6 @@ async function fetchFromPastedList() {
     return;
   }
 
-  // Parse: accept newlines, commas, semicolons, spaces as separators
   const nums = [...new Set(
     raw.split(/[\n,;\s]+/)
        .map(s => parseInt(s.trim(), 10))
@@ -363,26 +399,36 @@ async function fetchFromPastedList() {
     return;
   }
 
-  const year   = $('yearSelect').value;
-  const tbaKey = $('tbaKeyInput').value.trim();
+  await loadTeamsFromNums(nums);
+}
+
+// ─── Refresh EPA for the currently displayed list ─────────────────────────────
+async function refreshEpaForCurrentList() {
+  if (!state.teams.length) {
+    showToast('No teams loaded to refresh.', 'info');
+    return;
+  }
+  const nums = state.teams.map(t => t.num);
+  // Preserve notes, picked state, and manual order
+  const preserved = {};
+  state.teams.forEach(t => { preserved[t.num] = { notes: t.notes, picked: t.picked, pick1: t.pick1, pick2: t.pick2 }; });
+  await loadTeamsFromNums(nums, preserved);
+}
+
+// ─── Core: fetch + build team list from an array of team numbers ───────────────
+async function loadTeamsFromNums(nums, preserve = {}) {
+  const year     = $('yearSelect').value;
+  const tbaKey   = $('tbaKeyInput').value.trim();
   const eventKey = $('eventKeyInput').value.trim();
 
   saveSettings();
-  showLoading(`Fetching data for ${nums.length} teams…`);
+  showLoading(`Fetching EPA for ${nums.length} teams…`);
   hideError();
 
   try {
-    // Fetch each team's year-specific EPA from Statbotics in parallel
-    const sbResults = await Promise.allSettled(
-      nums.map(num =>
-        fetch(`${STATBOTICS_BASE}/team_year/${num}/${year}`)
-          .then(r => r.ok ? r.json() : null)
-          .catch(() => null)
-      )
-    );
+    const sbResults = await fetchEpaForNums(nums, year);
 
     let oprMap = {};
-    // If event key + TBA key provided, also fetch OPR for that event
     if (eventKey && tbaKey) {
       updateLoadingText('Fetching TBA OPR data…');
       try {
@@ -404,6 +450,7 @@ async function fetchFromPastedList() {
     sbResults.forEach((result, i) => {
       const num = nums[i];
       const d   = (result.status === 'fulfilled') ? result.value : null;
+      const p   = preserve[num] || {};
       teams.push({
         num,
         name:    d?.name || d?.team_name || d?.nickname || `Team ${num}`,
@@ -412,15 +459,17 @@ async function fetchFromPastedList() {
         teleop:  d?.epa?.teleop?.mean       ?? null,
         endgame: d?.epa?.endgame?.mean      ?? null,
         opr:     oprMap[num] ?? null,
-        notes:   '',
-        picked:  false,
-        pick1:   false,
-        pick2:   false,
+        notes:   p.notes   ?? '',
+        picked:  p.picked  ?? false,
+        pick1:   p.pick1   ?? false,
+        pick2:   p.pick2   ?? false,
       });
     });
 
-    // Sort by EPA descending, nulls last
-    teams.sort((a, b) => (b.epa ?? -Infinity) - (a.epa ?? -Infinity));
+    // Only re-sort if not preserving an existing manual order
+    if (!Object.keys(preserve).length) {
+      teams.sort((a, b) => (b.epa ?? -Infinity) - (a.epa ?? -Infinity));
+    }
 
     state.teams          = teams;
     state.activeListName = null;
@@ -428,14 +477,20 @@ async function fetchFromPastedList() {
     state.sortAsc        = false;
     localStorage.removeItem(LS_ACTIVE);
 
+    const withData = teams.filter(t => t.epa !== null).length;
     eventBadge.textContent   = `${nums.length} teams (pasted)`;
     eventBadge.style.display = '';
 
     hideLoading();
-    showUI(null);   // must come before renderTeams so statsBar exists
+    showUI(null);
     renderTeams();
     renderSavedLists();
-    showToast(`Loaded ${teams.length} teams from pasted list`, 'success');
+
+    if (withData === 0) {
+      showToast(`No EPA data found for any team. Try a different year.`, 'error');
+    } else {
+      showToast(`Loaded ${teams.length} teams — ${withData} with EPA data`, 'success');
+    }
 
   } catch (err) {
     hideLoading();
@@ -853,6 +908,7 @@ function bindEvents() {
 
   // Generate list (header toolbar button)
   $('generateBtn').addEventListener('click', () => fetchData());
+  $('refreshEpaBtn').addEventListener('click', () => refreshEpaForCurrentList());
 
   // Empty-state generate button → open sidebar so user can configure
   $('emptyGenerateBtn').addEventListener('click', () => openSidebar());
