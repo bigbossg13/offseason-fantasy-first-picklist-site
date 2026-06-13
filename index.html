@@ -150,31 +150,37 @@
           </button>
           <div class="app-brand">
             <span class="brand-icon">🏆</span>
-            <span class="brand-name">Draft Board</span>
+            <span class="brand-name">Draft<span class="brand-accent">Board</span></span>
           </div>
-          <span class="event-badge" id="eventBadge">No event loaded</span>
+          <span class="event-badge" id="eventBadge" style="display:none"></span>
         </div>
 
         <div class="header-right">
-          <button class="btn btn-sm btn-secondary" id="doublePickToggle" title="Toggle double-pick mode">
+          <div class="search-wrapper">
+            <span class="search-icon">🔍</span>
+            <input class="search-input" type="text" id="searchInput" placeholder="Search team…" />
+            <button class="search-clear" id="searchClearBtn" title="Clear search" style="display:none">✕</button>
+          </div>
+          <button class="btn btn-sm btn-secondary toggle-btn" id="doublePickToggle" title="Toggle double-pick mode">
             Double Pick: <span id="doublePickLabel">OFF</span>
           </button>
-          <button class="btn btn-sm btn-secondary" id="togglePickedBtn">Hide Picked</button>
-          <button class="btn btn-sm btn-accent" id="generateBtn">⚙ Generate List</button>
-          <button class="btn btn-sm btn-secondary" id="resetOrderBtn">↻ Reset Order</button>
-          <button class="btn btn-sm btn-secondary" id="saveListBtn">💾 Save List</button>
-          <button class="btn btn-sm btn-teal" id="copyDiscordBtn">📋 Copy to Discord</button>
+          <button class="btn btn-sm btn-secondary toggle-btn" id="togglePickedBtn">Hide Picked</button>
         </div>
       </header>
 
-      <!-- Search / Filter Bar -->
-      <div class="filter-bar">
-        <div class="search-wrapper">
-          <span class="search-icon">🔍</span>
-          <input class="search-input" type="text" id="searchInput" placeholder="Search by team number or name…" />
-          <button class="search-clear" id="searchClearBtn" title="Clear search">✕</button>
+      <!-- Toolbar -->
+      <div class="toolbar">
+        <div class="toolbar-left">
+          <button class="btn btn-primary" id="generateBtn">▶ Generate List</button>
+          <button class="btn btn-secondary" id="resetOrderBtn">↻ Reset Order</button>
         </div>
-        <div class="filter-meta" id="filterMeta">No data loaded</div>
+        <div class="toolbar-center">
+          <span class="filter-meta" id="filterMeta">No data loaded</span>
+        </div>
+        <div class="toolbar-right">
+          <button class="btn btn-secondary" id="saveListBtn">💾 Save List</button>
+          <button class="btn btn-teal" id="copyDiscordBtn">📋 Copy to Discord</button>
+        </div>
       </div>
 
       <!-- Loading State -->
