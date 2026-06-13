@@ -771,7 +771,7 @@ th.sort-desc .sort-arrow::after { content: ' ↓'; }
 .picked-badge,
 .pick1-badge,
 .pick2-badge {
-  display: inline-block;
+  display: none;   /* hidden by default; shown via .picked/.double-picked-* on the row */
   border-radius: 20px;
   padding: 1px 6px;
   font-size: 0.6rem;
@@ -781,6 +781,10 @@ th.sort-desc .sort-arrow::after { content: ' ↓'; }
   margin-top: 2px;
   margin-left: 4px;
 }
+
+.picklist-table tbody tr.picked .picked-badge { display: inline-block; }
+.picklist-table tbody tr.double-picked-1 .pick1-badge { display: inline-block; }
+.picklist-table tbody tr.double-picked-2 .pick2-badge { display: inline-block; }
 .picked-badge {
   background: rgba(231,76,60,0.18);
   border: 1px solid rgba(231,76,60,0.4);
@@ -1270,25 +1274,9 @@ body.double-pick-mode .dpick-wrap { display: flex; }
 /* Hidden row (search/filter) */
 .hidden-row { display: none !important; }
 
-/* =====================================================================
-   PICK BADGES (inline next to team number)
-   ===================================================================== */
-.pick-num-badge {
-  display: none;
-  font-size: 9px;
-  font-weight: 800;
-  letter-spacing: 0.06em;
-  padding: 1px 5px;
-  border-radius: 4px;
-  text-transform: uppercase;
-  vertical-align: middle;
-}
-
-.pick-num-badge.pick-1 { background: var(--accent-orange); color: #fff; }
-.pick-num-badge.pick-2 { background: var(--accent-yellow); color: var(--bg-primary); }
-
-.picklist-table tbody tr.double-picked-1 .pick-num-badge.pick-1 { display: inline-block; }
-.picklist-table tbody tr.double-picked-2 .pick-num-badge.pick-2 { display: inline-block; }
+/* pick1/pick2 badge colors */
+.pick1-badge { background: var(--accent-orange); color: #fff; }
+.pick2-badge { background: var(--accent-yellow); color: var(--bg-primary); }
 
 /* dim both double-picked rows */
 .picklist-table tbody tr.double-picked-1,

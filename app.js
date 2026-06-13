@@ -125,8 +125,8 @@ function loadList(name) {
   state.teams = data.map(t => ({ ...t }));
   state.activeListName = name;
   localStorage.setItem(LS_ACTIVE, name);
+  showUI(name);   // must come before renderTeams so statsBar exists
   renderTeams();
-  showUI(name);
   renderSavedLists();
 }
 
@@ -298,20 +298,18 @@ async function fetchData() {
       return;
     }
 
-    calcScores(teams);
-    teams.sort((a, b) => b.score - a.score);
+    teams.sort((a, b) => (b.epa ?? -Infinity) - (a.epa ?? -Infinity));
 
     state.teams          = teams;
     state.activeListName = null;
-    state.sortCol        = 'score';
+    state.sortCol        = 'epa';
     state.sortAsc        = false;
     localStorage.removeItem(LS_ACTIVE);
 
     // Update event badge
     if (eventKey) {
-      eventBadge.textContent = eventKey.toUpperCase();
+      eventBadge.textContent   = eventKey.toUpperCase();
       eventBadge.style.display = '';
-      // Try to get the human-readable event name from TBA
       if (tbaKey) {
         fetchEventName(eventKey, tbaKey).then(name => {
           if (name) eventBadge.textContent = `${name} (${eventKey})`;
@@ -322,8 +320,8 @@ async function fetchData() {
     }
 
     hideLoading();
+    showUI(null);   // must come before renderTeams so statsBar exists
     renderTeams();
-    showUI(null);
     renderSavedLists();
     showToast(`Loaded ${teams.length} teams${Object.keys(oprMap).length ? ' with OPR' : ''}`, 'success');
 
@@ -406,10 +404,10 @@ async function fetchFromPastedList() {
     const teams = [];
     sbResults.forEach((result, i) => {
       const num = nums[i];
-      const d   = result.status === 'fulfilled' ? result.value : null;
+      const d   = (result.status === 'fulfilled') ? result.value : null;
       teams.push({
         num,
-        name:    d?.team_name || d?.nickname || `Team ${num}`,
+        name:    d?.name || d?.team_name || d?.nickname || `Team ${num}`,
         epa:     d?.epa?.total_points?.mean ?? null,
         auto:    d?.epa?.auto?.mean         ?? null,
         teleop:  d?.epa?.teleop?.mean       ?? null,
@@ -422,22 +420,21 @@ async function fetchFromPastedList() {
       });
     });
 
-    // Calculate composite scores then sort
-    calcScores(teams);
-    teams.sort((a, b) => b.score - a.score);
+    // Sort by EPA descending, nulls last
+    teams.sort((a, b) => (b.epa ?? -Infinity) - (a.epa ?? -Infinity));
 
     state.teams          = teams;
     state.activeListName = null;
-    state.sortCol        = 'score';
+    state.sortCol        = 'epa';
     state.sortAsc        = false;
     localStorage.removeItem(LS_ACTIVE);
 
-    eventBadge.textContent  = `${nums.length} teams (pasted)`;
+    eventBadge.textContent   = `${nums.length} teams (pasted)`;
     eventBadge.style.display = '';
 
     hideLoading();
+    showUI(null);   // must come before renderTeams so statsBar exists
     renderTeams();
-    showUI(null);
     renderSavedLists();
     showToast(`Loaded ${teams.length} teams from pasted list`, 'success');
 
@@ -526,8 +523,8 @@ function renderTeams() {
         <div class="team-num">
           ${team.num}
           <span class="picked-badge">PICKED</span>
-          <span class="pick-num-badge pick-1">P1</span>
-          <span class="pick-num-badge pick-2">P2</span>
+          <span class="pick1-badge">P1</span>
+          <span class="pick2-badge">P2</span>
         </div>
         <div class="team-name">${esc(team.name)}</div>
       </td>
