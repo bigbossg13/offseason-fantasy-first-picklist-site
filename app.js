@@ -1,97 +1,104 @@
-/* app.js — FRC Fantasy Draft Board application logic
-   Pulls EPA from Statbotics API and OPR from The Blue Alliance API.
-   All state persisted to localStorage. No build tools required. */
+/* app.js — FRC Fantasy Draft Board application logic.
+   Pulls EPA data from Statbotics API and OPR from The Blue Alliance API.
+   All state is persisted to localStorage. No build tools or npm required.
+   Works as a fully static site on GitHub Pages. */
 
 'use strict';
 
-// ─── Constants ────────────────────────────────────────────────────────────────
+// ─── API Base URLs ────────────────────────────────────────────────────────────
 const STATBOTICS_BASE = 'https://api.statbotics.io/v3';
 const TBA_BASE        = 'https://www.thebluealliance.com/api/v3';
-const LS_SETTINGS     = 'frc_draft_settings';
-const LS_LISTS        = 'frc_draft_lists';
-const LS_ACTIVE       = 'frc_draft_active';
+
+// ─── localStorage keys ───────────────────────────────────────────────────────
+const LS_SETTINGS = 'frc_draft_settings';
+const LS_LISTS    = 'frc_draft_lists';
+const LS_ACTIVE   = 'frc_draft_active';
 
 // ─── App State ────────────────────────────────────────────────────────────────
 let state = {
-  teams: [],           // [{num, name, epa, opr, auto, teleop, endgame, score, notes, picked, pick1, pick2}]
-  savedLists: {},      // {name: serialized list}
+  teams: [],          // [{num, name, epa, opr, auto, teleop, endgame, notes, picked, pick1, pick2}]
+  savedLists: {},     // { listName: [teamData, ...] }
   activeListName: null,
-  sortCol: 'score',
+  sortCol: 'epa',
   sortAsc: false,
   doublePick: false,
   showPicked: true,
   searchQuery: '',
-  weights: { epa: 60, opr: 40, auto: 20, endgame: 15 },
+  weights: { epa: 60, opr: 40, auto: 10, endgame: 10 }, // slider display only
 };
 
-// ─── DOM refs ─────────────────────────────────────────────────────────────────
-const $ = id => document.getElementById(id);
-const sidebar        = $('sidebar');
-const sidebarBackdrop= $('sidebar-backdrop');
-const mainWrapper    = $('main-wrapper');
-const teamList       = $('team-list');
-const emptyState     = $('empty-state');
-const tableHeader    = $('table-header');
-const statsBar       = $('stats-bar');
-const loadingOverlay = $('loading-overlay');
-const loadingText    = $('loading-text');
-const toast          = $('toast');
-const eventBadge     = $('event-badge');
-const currentListName= $('current-list-name');
-const savedListsCont = $('saved-lists-container');
+// ─── DOM helpers ──────────────────────────────────────────────────────────────
+const $  = id => document.getElementById(id);
+const el = (tag, cls, text) => {
+  const e = document.createElement(tag);
+  if (cls)  e.className   = cls;
+  if (text) e.textContent = text;
+  return e;
+};
+
+// ─── Cached DOM refs ──────────────────────────────────────────────────────────
+let sidebar, mainContent, picklistTable, picklistBody,
+    emptyState, loadingOverlay, loadingText, toast, eventBadge,
+    filterMeta, savedListsCont, errorBanner, errorMsg;
 
 // ─── Init ─────────────────────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', () => {
+  // Cache DOM refs
+  sidebar         = $('sidebar');
+  mainContent     = $('mainContent');
+  picklistTable   = $('picklistTable');
+  picklistBody    = $('picklistBody');
+  emptyState      = $('emptyState');
+  loadingOverlay  = $('loadingOverlay');
+  loadingText     = $('loadingText');
+  toast           = $('toast');
+  eventBadge      = $('eventBadge');
+  filterMeta      = $('filterMeta');
+  savedListsCont  = $('savedListsContainer');
+  errorBanner     = $('errorBanner');
+  errorMsg        = $('errorMessage');
+
   loadSettings();
   loadSavedLists();
   bindEvents();
   renderSavedLists();
 
-  // Restore last active list if any
+  // Restore last active list if stored
   const active = localStorage.getItem(LS_ACTIVE);
   if (active && state.savedLists[active]) {
     loadList(active);
   }
 
-  // Wire sortable
+  // Initialise sortable on empty tbody (will re-init after data loads)
   initSortable();
+
+  // On wide screens, open sidebar by default
+  if (window.innerWidth >= 900) openSidebar();
 });
 
 // ─── Settings Persistence ─────────────────────────────────────────────────────
 function loadSettings() {
   try {
     const s = JSON.parse(localStorage.getItem(LS_SETTINGS) || '{}');
-    if (s.tbaKey)    $('tba-key').value    = s.tbaKey;
-    if (s.eventKey)  $('event-key').value  = s.eventKey;
-    if (s.year)      $('year-select').value = s.year;
-    if (s.weights)   Object.assign(state.weights, s.weights);
-  } catch {}
-
-  // Apply weights to sliders
-  $('w-epa').value      = state.weights.epa;
-  $('w-opr').value      = state.weights.opr;
-  $('w-auto').value     = state.weights.auto;
-  $('w-endgame').value  = state.weights.endgame;
-  $('w-epa-val').textContent     = state.weights.epa;
-  $('w-opr-val').textContent     = state.weights.opr;
-  $('w-auto-val').textContent    = state.weights.auto;
-  $('w-endgame-val').textContent = state.weights.endgame;
+    if (s.tbaKey)   $('tbaKeyInput').value   = s.tbaKey;
+    if (s.eventKey) $('eventKeyInput').value = s.eventKey;
+    if (s.year)     $('yearSelect').value    = s.year;
+  } catch (_) { /* ignore */ }
 }
 
 function saveSettings() {
   localStorage.setItem(LS_SETTINGS, JSON.stringify({
-    tbaKey:   $('tba-key').value.trim(),
-    eventKey: $('event-key').value.trim(),
-    year:     $('year-select').value,
-    weights:  state.weights,
+    tbaKey:   $('tbaKeyInput').value.trim(),
+    eventKey: $('eventKeyInput').value.trim(),
+    year:     $('yearSelect').value,
   }));
 }
 
-// ─── Saved Lists ──────────────────────────────────────────────────────────────
+// ─── Saved Lists Persistence ──────────────────────────────────────────────────
 function loadSavedLists() {
   try {
     state.savedLists = JSON.parse(localStorage.getItem(LS_LISTS) || '{}');
-  } catch { state.savedLists = {}; }
+  } catch (_) { state.savedLists = {}; }
 }
 
 function persistLists() {
@@ -99,22 +106,17 @@ function persistLists() {
 }
 
 function saveCurrentList(name) {
-  state.savedLists[name] = state.teams.map(t => ({
-    num: t.num, name: t.name,
-    epa: t.epa, opr: t.opr,
-    auto: t.auto, teleop: t.teleop, endgame: t.endgame,
-    score: t.score,
-    notes: t.notes,
-    picked: t.picked,
-    pick1: t.pick1,
-    pick2: t.pick2,
-  }));
+  if (!state.teams.length) {
+    showToast('Nothing to save — generate a list first.', 'error');
+    return false;
+  }
+  state.savedLists[name] = state.teams.map(t => ({ ...t }));
   persistLists();
   state.activeListName = name;
   localStorage.setItem(LS_ACTIVE, name);
-  currentListName.textContent = name;
   renderSavedLists();
   showToast(`✓ Saved "${name}"`, 'success');
+  return true;
 }
 
 function loadList(name) {
@@ -123,10 +125,8 @@ function loadList(name) {
   state.teams = data.map(t => ({ ...t }));
   state.activeListName = name;
   localStorage.setItem(LS_ACTIVE, name);
-  currentListName.textContent = name;
   renderTeams();
-  updateStats();
-  showUI();
+  showUI(name);
   renderSavedLists();
 }
 
@@ -136,7 +136,6 @@ function deleteList(name) {
   if (state.activeListName === name) {
     state.activeListName = null;
     localStorage.removeItem(LS_ACTIVE);
-    currentListName.textContent = 'Unsaved List';
   }
   renderSavedLists();
   showToast(`Deleted "${name}"`, 'info');
@@ -145,43 +144,61 @@ function deleteList(name) {
 function renderSavedLists() {
   const names = Object.keys(state.savedLists);
   savedListsCont.innerHTML = '';
+
   if (!names.length) {
-    savedListsCont.innerHTML = '<div style="font-size:11px;color:var(--text-muted);padding:4px 0">No saved lists yet</div>';
+    savedListsCont.innerHTML = '<div style="font-size:11px;color:var(--text-muted);padding:6px 0">No saved lists yet.</div>';
     return;
   }
+
   names.forEach(name => {
-    const item = document.createElement('div');
-    item.className = 'saved-list-item' + (name === state.activeListName ? ' active-list' : '');
-    item.innerHTML = `
-      <span class="saved-list-name" title="${esc(name)}">${esc(name)}</span>
-      <span class="saved-list-meta">${state.savedLists[name].length} teams</span>
-      <button class="saved-list-delete" title="Delete list" aria-label="Delete ${esc(name)}">✕</button>
-    `;
-    item.querySelector('.saved-list-name').addEventListener('click', () => {
+    const div = el('div', 'saved-list-item' + (name === state.activeListName ? ' active-list' : ''));
+
+    const nameSpan = el('span', 'saved-list-name', name);
+    nameSpan.title = name;
+    nameSpan.addEventListener('click', () => {
       loadList(name);
       closeSidebar();
     });
-    item.querySelector('.saved-list-delete').addEventListener('click', e => {
+
+    const meta = el('span', 'saved-list-meta', `${state.savedLists[name].length} teams`);
+
+    const del = el('button', 'saved-list-delete', '✕');
+    del.title = `Delete "${name}"`;
+    del.setAttribute('aria-label', `Delete list ${name}`);
+    del.addEventListener('click', e => {
       e.stopPropagation();
       if (confirm(`Delete list "${name}"?`)) deleteList(name);
     });
-    savedListsCont.appendChild(item);
+
+    div.appendChild(nameSpan);
+    div.appendChild(meta);
+    div.appendChild(del);
+    savedListsCont.appendChild(div);
   });
 }
 
-// ─── API Fetching ─────────────────────────────────────────────────────────────
-async function fetchData() {
-  const tbaKey   = $('tba-key').value.trim();
-  const eventKey = $('event-key').value.trim();
-  const year     = $('year-select').value;
+// ─── Auto-save helper ─────────────────────────────────────────────────────────
+function autoSave() {
+  if (state.activeListName) {
+    state.savedLists[state.activeListName] = state.teams.map(t => ({ ...t }));
+    persistLists();
+  }
+}
 
+// ─── API Data Fetching ────────────────────────────────────────────────────────
+async function fetchData() {
+  const tbaKey   = $('tbaKeyInput').value.trim();
+  const eventKey = $('eventKeyInput').value.trim();
+
+  saveSettings();
   showLoading('Fetching Statbotics EPA data…');
+  hideError();
 
   let epaMap = {};
   let oprMap = {};
 
   try {
-    // ── Statbotics ──
+    // ── Statbotics ──────────────────────────────────────────────────────────
     let sbUrl;
     if (eventKey) {
       sbUrl = `${STATBOTICS_BASE}/team_events?event=${encodeURIComponent(eventKey)}&limit=500`;
@@ -190,110 +207,242 @@ async function fetchData() {
     }
 
     const sbResp = await fetch(sbUrl);
-    if (!sbResp.ok) throw new Error(`Statbotics error: ${sbResp.status}`);
+    if (!sbResp.ok) {
+      if (sbResp.status === 404 && eventKey) {
+        throw new Error(`Event "${eventKey}" not found on Statbotics. Check the event key.`);
+      }
+      throw new Error(`Statbotics API error: ${sbResp.status} ${sbResp.statusText}`);
+    }
+
     const sbData = await sbResp.json();
+    if (!Array.isArray(sbData) || sbData.length === 0) {
+      throw new Error(eventKey
+        ? `No teams found for event "${eventKey}". Is the event key correct?`
+        : 'No team data returned from Statbotics.');
+    }
 
     if (eventKey) {
-      // team_events format
+      // team_events shape: { team, team_name, epa: { total_points, auto, teleop, endgame } }
       sbData.forEach(te => {
-        const num  = te.team;
-        const epa  = te.epa?.total_points?.mean  ?? null;
-        const auto = te.epa?.auto?.mean           ?? null;
-        const tele = te.epa?.teleop?.mean         ?? null;
-        const end  = te.epa?.endgame?.mean        ?? null;
-        epaMap[num] = { epa, auto, teleop: tele, endgame: end, name: te.team_name || `Team ${num}` };
+        const num = te.team;
+        epaMap[num] = {
+          epa:     te.epa?.total_points?.mean ?? null,
+          auto:    te.epa?.auto?.mean          ?? null,
+          teleop:  te.epa?.teleop?.mean        ?? null,
+          endgame: te.epa?.endgame?.mean       ?? null,
+          name:    te.team_name || `Team ${num}`,
+        };
       });
     } else {
-      // teams format
+      // teams shape: { team, nickname, epa: { total_points, auto, teleop, endgame } }
       sbData.forEach(t => {
-        const num  = t.team;
-        const epa  = t.epa?.total_points?.mean  ?? null;
-        const auto = t.epa?.auto?.mean           ?? null;
-        const tele = t.epa?.teleop?.mean         ?? null;
-        const end  = t.epa?.endgame?.mean        ?? null;
-        epaMap[num] = { epa, auto, teleop: tele, endgame: end, name: t.nickname || `Team ${num}` };
+        const num = t.team;
+        epaMap[num] = {
+          epa:     t.epa?.total_points?.mean ?? null,
+          auto:    t.epa?.auto?.mean          ?? null,
+          teleop:  t.epa?.teleop?.mean        ?? null,
+          endgame: t.epa?.endgame?.mean       ?? null,
+          name:    t.nickname || t.name || `Team ${num}`,
+        };
       });
     }
 
-    // ── TBA OPR (optional) ──
+    // ── TBA OPR (optional, only for events with a key + TBA key) ────────────
     if (eventKey && tbaKey) {
-      loadingText.textContent = 'Fetching TBA OPR data…';
+      updateLoadingText('Fetching TBA OPR data…');
       try {
-        const tbaResp = await fetch(`${TBA_BASE}/event/${encodeURIComponent(eventKey)}/oprs`, {
-          headers: { 'X-TBA-Auth-Key': tbaKey },
-        });
+        const tbaResp = await fetch(
+          `${TBA_BASE}/event/${encodeURIComponent(eventKey)}/oprs`,
+          { headers: { 'X-TBA-Auth-Key': tbaKey } }
+        );
         if (tbaResp.ok) {
           const tbaData = await tbaResp.json();
           const oprs = tbaData.oprs || {};
-          Object.entries(oprs).forEach(([key, val]) => {
-            // TBA team keys look like "frc254"
+          for (const [key, val] of Object.entries(oprs)) {
             const num = parseInt(key.replace('frc', ''), 10);
-            oprMap[num] = val;
-          });
+            if (!isNaN(num)) oprMap[num] = val;
+          }
         } else if (tbaResp.status === 401) {
-          showToast('TBA API key invalid — OPR skipped', 'error');
+          showToast('TBA API key is invalid — OPR skipped.', 'error');
+        } else if (tbaResp.status === 404) {
+          showToast(`Event "${eventKey}" not found on TBA — OPR skipped.`, 'info');
         } else {
-          showToast(`TBA returned ${tbaResp.status} — OPR skipped`, 'info');
+          showToast(`TBA returned ${tbaResp.status} — OPR skipped.`, 'info');
         }
-      } catch (e) {
-        showToast('Could not reach TBA API — OPR skipped', 'info');
+      } catch (tbaErr) {
+        showToast('Could not reach TBA API — OPR data skipped.', 'info');
       }
     } else if (eventKey && !tbaKey) {
-      showToast('No TBA key — OPR data skipped', 'info');
+      showToast('No TBA API key — OPR data unavailable. Enter your key in settings.', 'info');
     }
 
-    // ── Build team list ──
-    const teams = Object.entries(epaMap).map(([num, d]) => {
-      const opr = oprMap[num] ?? null;
-      return {
-        num:     parseInt(num, 10),
-        name:    d.name,
-        epa:     d.epa,
-        auto:    d.auto,
-        teleop:  d.teleop,
-        endgame: d.endgame,
-        opr:     opr,
-        score:   0,
-        notes:   '',
-        picked:  false,
-        pick1:   false,
-        pick2:   false,
-      };
-    });
+    // ── Build team array ─────────────────────────────────────────────────────
+    updateLoadingText('Sorting by EPA…');
+    const teams = Object.entries(epaMap).map(([numStr, d]) => ({
+      num:     parseInt(numStr, 10),
+      name:    d.name,
+      epa:     d.epa,
+      auto:    d.auto,
+      teleop:  d.teleop,
+      endgame: d.endgame,
+      opr:     oprMap[parseInt(numStr, 10)] ?? null,
+      notes:   '',
+      picked:  false,
+      pick1:   false,
+      pick2:   false,
+    }));
 
     if (!teams.length) {
       hideLoading();
-      showToast('No teams found — check event key', 'error');
+      showToast('No teams found — check the event key and try again.', 'error');
       return;
     }
 
-    // Calculate composite scores and sort
-    calcScores(teams);
-    teams.sort((a, b) => b.score - a.score);
+    teams.sort((a, b) => (b.epa ?? -Infinity) - (a.epa ?? -Infinity));
 
-    state.teams = teams;
+    state.teams          = teams;
     state.activeListName = null;
-    currentListName.textContent = 'Unsaved List';
+    state.sortCol        = 'epa';
+    state.sortAsc        = false;
     localStorage.removeItem(LS_ACTIVE);
 
     // Update event badge
     if (eventKey) {
       eventBadge.textContent = eventKey.toUpperCase();
       eventBadge.style.display = '';
+      // Try to get the human-readable event name from TBA
+      if (tbaKey) {
+        fetchEventName(eventKey, tbaKey).then(name => {
+          if (name) eventBadge.textContent = `${name} (${eventKey})`;
+        });
+      }
     } else {
       eventBadge.style.display = 'none';
     }
 
     hideLoading();
     renderTeams();
-    updateStats();
-    showUI();
+    showUI(null);
     renderSavedLists();
-    showToast(`Loaded ${teams.length} teams`, 'success');
+    showToast(`Loaded ${teams.length} teams${Object.keys(oprMap).length ? ' with OPR' : ''}`, 'success');
 
   } catch (err) {
     hideLoading();
-    console.error(err);
+    console.error('[DraftBoard] fetchData error:', err);
+    showError(err.message);
+    showToast(`Error: ${err.message}`, 'error');
+  }
+}
+
+async function fetchEventName(eventKey, tbaKey) {
+  try {
+    const resp = await fetch(`${TBA_BASE}/event/${encodeURIComponent(eventKey)}`, {
+      headers: { 'X-TBA-Auth-Key': tbaKey },
+    });
+    if (!resp.ok) return null;
+    const data = await resp.json();
+    return data.name || null;
+  } catch (_) { return null; }
+}
+
+// ─── Paste-in Team List Fetch ─────────────────────────────────────────────────
+async function fetchFromPastedList() {
+  const raw = $('pasteTeamInput').value.trim();
+  if (!raw) {
+    showToast('Paste some team numbers first.', 'error');
+    return;
+  }
+
+  // Parse: accept newlines, commas, semicolons, spaces as separators
+  const nums = [...new Set(
+    raw.split(/[\n,;\s]+/)
+       .map(s => parseInt(s.trim(), 10))
+       .filter(n => !isNaN(n) && n > 0)
+  )];
+
+  if (!nums.length) {
+    showToast('No valid team numbers found in the pasted text.', 'error');
+    return;
+  }
+
+  const year   = $('yearSelect').value;
+  const tbaKey = $('tbaKeyInput').value.trim();
+  const eventKey = $('eventKeyInput').value.trim();
+
+  saveSettings();
+  showLoading(`Fetching data for ${nums.length} teams…`);
+  hideError();
+
+  try {
+    // Fetch each team's year-specific EPA from Statbotics in parallel
+    const sbResults = await Promise.allSettled(
+      nums.map(num =>
+        fetch(`${STATBOTICS_BASE}/team_year/${num}/${year}`)
+          .then(r => r.ok ? r.json() : null)
+          .catch(() => null)
+      )
+    );
+
+    let oprMap = {};
+    // If event key + TBA key provided, also fetch OPR for that event
+    if (eventKey && tbaKey) {
+      updateLoadingText('Fetching TBA OPR data…');
+      try {
+        const tbaResp = await fetch(
+          `${TBA_BASE}/event/${encodeURIComponent(eventKey)}/oprs`,
+          { headers: { 'X-TBA-Auth-Key': tbaKey } }
+        );
+        if (tbaResp.ok) {
+          const tbaData = await tbaResp.json();
+          for (const [key, val] of Object.entries(tbaData.oprs || {})) {
+            const n = parseInt(key.replace('frc', ''), 10);
+            if (!isNaN(n)) oprMap[n] = val;
+          }
+        }
+      } catch (_) { /* OPR optional */ }
+    }
+
+    const teams = [];
+    sbResults.forEach((result, i) => {
+      const num = nums[i];
+      const d   = result.status === 'fulfilled' ? result.value : null;
+      teams.push({
+        num,
+        name:    d?.team_name || d?.nickname || `Team ${num}`,
+        epa:     d?.epa?.total_points?.mean ?? null,
+        auto:    d?.epa?.auto?.mean         ?? null,
+        teleop:  d?.epa?.teleop?.mean       ?? null,
+        endgame: d?.epa?.endgame?.mean      ?? null,
+        opr:     oprMap[num] ?? null,
+        notes:   '',
+        picked:  false,
+        pick1:   false,
+        pick2:   false,
+      });
+    });
+
+    // Sort by EPA descending, nulls last
+    teams.sort((a, b) => (b.epa ?? -Infinity) - (a.epa ?? -Infinity));
+
+    state.teams          = teams;
+    state.activeListName = null;
+    state.sortCol        = 'epa';
+    state.sortAsc        = false;
+    localStorage.removeItem(LS_ACTIVE);
+
+    eventBadge.textContent  = `${nums.length} teams (pasted)`;
+    eventBadge.style.display = '';
+
+    hideLoading();
+    renderTeams();
+    showUI(null);
+    renderSavedLists();
+    showToast(`Loaded ${teams.length} teams from pasted list`, 'success');
+
+  } catch (err) {
+    hideLoading();
+    console.error('[DraftBoard] fetchFromPastedList error:', err);
+    showError(err.message);
     showToast(`Error: ${err.message}`, 'error');
   }
 }
@@ -301,106 +450,118 @@ async function fetchData() {
 // ─── Score Calculation ────────────────────────────────────────────────────────
 function calcScores(teams) {
   const w = state.weights;
-  const total = w.epa + w.opr + w.auto + w.endgame || 1;
+  const totalWeight = (w.epa + w.opr + w.auto + w.endgame) || 1;
 
-  // Normalise each metric 0–1 across all teams
-  function normArr(arr) {
-    const vals  = arr.filter(v => v !== null && !isNaN(v));
-    if (!vals.length) return arr.map(() => 0);
-    const mn = Math.min(...vals);
-    const mx = Math.max(...vals);
+  function normalise(arr) {
+    const valid = arr.filter(v => v !== null && !isNaN(v));
+    if (!valid.length) return arr.map(() => 0);
+    const mn = Math.min(...valid);
+    const mx = Math.max(...valid);
     if (mx === mn) return arr.map(v => v === null ? 0 : 0.5);
     return arr.map(v => v === null ? 0 : (v - mn) / (mx - mn));
   }
 
-  const epaNorm     = normArr(teams.map(t => t.epa));
-  const oprNorm     = normArr(teams.map(t => t.opr));
-  const autoNorm    = normArr(teams.map(t => t.auto));
-  const endgameNorm = normArr(teams.map(t => t.endgame));
+  const normEpa     = normalise(teams.map(t => t.epa));
+  const normOpr     = normalise(teams.map(t => t.opr));
+  const normAuto    = normalise(teams.map(t => t.auto));
+  const normEndgame = normalise(teams.map(t => t.endgame));
 
   teams.forEach((t, i) => {
     t.score = (
-      epaNorm[i]     * w.epa      +
-      oprNorm[i]     * w.opr      +
-      autoNorm[i]    * w.auto     +
-      endgameNorm[i] * w.endgame
-    ) / total * 100;
+      normEpa[i]     * w.epa     +
+      normOpr[i]     * w.opr     +
+      normAuto[i]    * w.auto    +
+      normEndgame[i] * w.endgame
+    ) / totalWeight * 100;
   });
 }
 
 function recalcAndRender() {
   if (!state.teams.length) return;
   calcScores(state.teams);
-  // Re-sort by score only if currently sorted by score
   if (state.sortCol === 'score') {
-    state.teams.sort((a, b) => state.sortAsc ? a.score - b.score : b.score - a.score);
+    const mult = state.sortAsc ? 1 : -1;
+    state.teams.sort((a, b) => mult * (b.score - a.score));
   }
   renderTeams();
-  updateStats();
 }
 
-// ─── Render ───────────────────────────────────────────────────────────────────
-function renderTeams() {
-  teamList.innerHTML = '';
+// ─── Rendering ────────────────────────────────────────────────────────────────
+function fmt(v, d = 1) {
+  if (v === null || v === undefined || isNaN(v)) return null;
+  return Number(v).toFixed(d);
+}
 
-  const q = state.searchQuery.toLowerCase();
+function fmtCell(v, colorClass) {
+  const s = fmt(v);
+  if (s === null) return `<span class="no-data">—</span>`;
+  return colorClass ? `<span style="color:${colorClass}">${s}</span>` : s;
+}
+
+function renderTeams() {
+  picklistBody.innerHTML = '';
+
+  const q = state.searchQuery.toLowerCase().trim();
 
   state.teams.forEach((team, idx) => {
-    const isMatch = !q
-      || String(team.num).includes(q)
-      || team.name.toLowerCase().includes(q);
+    const isMatch  = !q || String(team.num).includes(q) || team.name.toLowerCase().includes(q);
+    const isPicked = team.picked || team.pick1 || team.pick2;
+    const hide     = !isMatch || (!state.showPicked && isPicked);
 
-    const li = document.createElement('li');
-    li.className = 'team-row' +
-      (team.picked  ? ' picked'  : '') +
-      (team.pick1   ? ' double-picked-1' : '') +
-      (team.pick2   ? ' double-picked-2' : '') +
-      (!isMatch     ? ' hidden-row' : '') +
-      (!state.showPicked && (team.picked || team.pick1 || team.pick2) ? ' hidden-row' : '');
+    const tr = document.createElement('tr');
+    tr.dataset.num = team.num;
+    tr.className = [
+      isPicked && !team.pick1 && !team.pick2 ? 'picked' : '',
+      team.pick1 ? 'double-picked-1' : '',
+      team.pick2 ? 'double-picked-2' : '',
+      hide ? 'hidden-row' : '',
+    ].filter(Boolean).join(' ');
 
-    li.dataset.num = team.num;
-
-    const fmt = v => (v === null || v === undefined) ? '<span class="no-data">—</span>' : (+v).toFixed(1);
-
-    li.innerHTML = `
-      <div class="drag-handle" title="Drag to reorder">⠿</div>
-      <div class="row-rank">${idx + 1}</div>
-      <div class="row-team" title="View details">
-        <div>
-          <div class="team-num">${team.num} <span class="picked-badge">PICKED</span><span class="pick-num-badge pick-1">P1</span><span class="pick-num-badge pick-2">P2</span></div>
-          <div class="team-name">${esc(team.name)}</div>
+    tr.innerHTML = `
+      <td class="col-drag"><span class="drag-handle" title="Drag to reorder">⠿</span></td>
+      <td class="col-rank row-rank">${idx + 1}</td>
+      <td class="col-team row-team">
+        <div class="team-num">
+          ${team.num}
+          <span class="picked-badge">PICKED</span>
+          <span class="pick-num-badge pick-1">P1</span>
+          <span class="pick-num-badge pick-2">P2</span>
         </div>
-      </div>
-      <div class="row-score row-stat">${team.score.toFixed(1)}</div>
-      <div class="row-stat accent-teal">${fmt(team.epa)}</div>
-      <div class="row-stat" style="color:#c9a0f8">${fmt(team.opr)}</div>
-      <div class="row-stat auto-col" style="color:var(--accent-green)">${fmt(team.auto)}</div>
-      <div class="row-stat teleop-col" style="color:#7eb8f7">${fmt(team.teleop)}</div>
-      <div class="row-stat" style="color:var(--accent-yellow)">${fmt(team.endgame)}</div>
-      <div class="row-notes-cell">
-        <textarea class="notes-input" placeholder="Notes…" rows="1">${esc(team.notes)}</textarea>
-      </div>
-      <div class="row-actions">
-        <button class="pick-btn" title="Toggle picked status">${team.picked ? 'Unpick' : 'Pick'}</button>
-        <div class="dpick-wrap">
-          <button class="dpick-btn p1 ${team.pick1 ? 'active' : ''}" title="Toggle Pick 1">P1</button>
-          <button class="dpick-btn p2 ${team.pick2 ? 'active' : ''}" title="Toggle Pick 2">P2</button>
+        <div class="team-name">${esc(team.name)}</div>
+      </td>
+      <td class="col-epa row-stat">${fmtCell(team.epa, 'var(--accent-teal)')}</td>
+      <td class="col-opr row-stat">${fmtCell(team.opr, '#c9a0f8')}</td>
+      <td class="col-auto row-stat">${fmtCell(team.auto, 'var(--accent-green)')}</td>
+      <td class="col-teleop row-stat">${fmtCell(team.teleop, '#7eb8f7')}</td>
+      <td class="col-endgame row-stat">${fmtCell(team.endgame, 'var(--accent-yellow)')}</td>
+      <td class="col-notes">
+        <textarea class="notes-input" rows="1" placeholder="Notes…">${esc(team.notes)}</textarea>
+      </td>
+      <td class="col-actions">
+        <div class="row-actions">
+          <button class="pick-btn" title="${team.picked ? 'Unpick' : 'Mark as picked'}">
+            ${team.picked ? '✓ Unpick' : 'Pick'}
+          </button>
+          <div class="dpick-wrap">
+            <button class="dpick-btn p1 ${team.pick1 ? 'active' : ''}" title="Toggle Pick 1">P1</button>
+            <button class="dpick-btn p2 ${team.pick2 ? 'active' : ''}" title="Toggle Pick 2">P2</button>
+          </div>
         </div>
-      </div>
+      </td>
     `;
 
-    // Notes
-    const notesEl = li.querySelector('.notes-input');
+    // Notes change
+    const notesEl = tr.querySelector('.notes-input');
     notesEl.addEventListener('input', () => {
       team.notes = notesEl.value;
       autoSave();
     });
 
-    // Click team info → detail modal
-    li.querySelector('.row-team').addEventListener('click', () => showDetailModal(team, idx + 1));
+    // Click on team name → detail modal
+    tr.querySelector('.row-team').addEventListener('click', () => showDetailModal(team, idx + 1));
 
-    // Single pick
-    li.querySelector('.pick-btn').addEventListener('click', () => {
+    // Single pick toggle
+    tr.querySelector('.pick-btn').addEventListener('click', () => {
       team.picked = !team.picked;
       if (team.picked) { team.pick1 = false; team.pick2 = false; }
       renderTeams();
@@ -409,63 +570,108 @@ function renderTeams() {
     });
 
     // Double pick P1
-    li.querySelector('.dpick-btn.p1').addEventListener('click', () => {
+    tr.querySelector('.dpick-btn.p1').addEventListener('click', () => {
       team.pick1 = !team.pick1;
-      if (team.pick1) { team.picked = false; }
+      if (team.pick1) { team.picked = false; team.pick2 = false; }
       renderTeams();
       updateStats();
       autoSave();
     });
 
     // Double pick P2
-    li.querySelector('.dpick-btn.p2').addEventListener('click', () => {
+    tr.querySelector('.dpick-btn.p2').addEventListener('click', () => {
       team.pick2 = !team.pick2;
-      if (team.pick2) { team.picked = false; }
+      if (team.pick2) { team.picked = false; team.pick1 = false; }
       renderTeams();
       updateStats();
       autoSave();
     });
 
-    teamList.appendChild(li);
+    picklistBody.appendChild(tr);
   });
 
-  // Re-init sortable after re-render
   initSortable();
+  updateStats();
+  updateFilterMeta();
 }
 
-function showUI() {
-  emptyState.style.display   = 'none';
-  tableHeader.style.display  = '';
-  statsBar.style.display     = '';
+function showUI(listName) {
+  emptyState.style.display    = 'none';
+  picklistTable.style.display = '';
+  // Show stats bar (injected into DOM after filter bar)
+  ensureStatsBar();
+  updateSortArrows();
+}
+
+function ensureStatsBar() {
+  if ($('statsBar')) return; // already exists
+  const bar = document.createElement('div');
+  bar.id        = 'statsBar';
+  bar.className = 'stats-bar';
+  bar.innerHTML = `
+    <div class="stat-pill">
+      <span class="stat-pill-label">Teams</span>
+      <span class="stat-pill-val" id="statTotal">0</span>
+    </div>
+    <div class="stat-pill">
+      <span class="stat-pill-label">Picked</span>
+      <span class="stat-pill-val accent-red" id="statPicked">0</span>
+    </div>
+    <div class="stat-pill">
+      <span class="stat-pill-label">Available</span>
+      <span class="stat-pill-val accent-green" id="statAvailable">0</span>
+    </div>
+    <div class="stat-pill">
+      <span class="stat-pill-label">Avg EPA</span>
+      <span class="stat-pill-val accent-teal" id="statAvgEpa">—</span>
+    </div>
+    <div class="stat-pill">
+      <span class="stat-pill-label">Top EPA</span>
+      <span class="stat-pill-val accent-purple" id="statTopEpa">—</span>
+    </div>
+  `;
+  // Insert stats bar before the table wrapper
+  const wrapper = $('tableWrapper');
+  wrapper.parentNode.insertBefore(bar, wrapper);
 }
 
 function updateStats() {
-  const total     = state.teams.length;
-  const picked    = state.teams.filter(t => t.picked || t.pick1 || t.pick2).length;
-  const available = total - picked;
-  const epas      = state.teams.map(t => t.epa).filter(v => v !== null);
-  const avgEpa    = epas.length ? (epas.reduce((a, b) => a + b, 0) / epas.length).toFixed(1) : '—';
-  const topEpa    = epas.length ? Math.max(...epas).toFixed(1) : '—';
+  if (!$('statsBar')) return;
+  const total    = state.teams.length;
+  const picked   = state.teams.filter(t => t.picked || t.pick1 || t.pick2).length;
+  const avail    = total - picked;
+  const epas     = state.teams.map(t => t.epa).filter(v => v !== null);
+  const avgEpa   = epas.length ? (epas.reduce((a, b) => a + b, 0) / epas.length).toFixed(1) : '—';
+  const topEpa   = epas.length ? Math.max(...epas).toFixed(1) : '—';
 
-  $('stat-total').textContent    = total;
-  $('stat-picked').textContent   = picked;
-  $('stat-available').textContent= available;
-  $('stat-avg-epa').textContent  = avgEpa;
-  $('stat-top-epa').textContent  = topEpa;
+  const set = (id, val) => { const e = $(id); if (e) e.textContent = val; };
+  set('statTotal',     total);
+  set('statPicked',    picked);
+  set('statAvailable', avail);
+  set('statAvgEpa',    avgEpa);
+  set('statTopEpa',    topEpa);
 }
 
-function autoSave() {
-  if (state.activeListName) {
-    state.savedLists[state.activeListName] = state.teams.map(t => ({ ...t }));
-    persistLists();
-  }
+function updateFilterMeta() {
+  if (!filterMeta) return;
+  const q        = state.searchQuery.trim();
+  const total    = state.teams.length;
+  const visible  = state.teams.filter(t => {
+    const match = !q || String(t.num).includes(q.toLowerCase()) || t.name.toLowerCase().includes(q.toLowerCase());
+    const hidden = !state.showPicked && (t.picked || t.pick1 || t.pick2);
+    return match && !hidden;
+  }).length;
+
+  if (!total)    { filterMeta.textContent = 'No data loaded'; return; }
+  if (q)         { filterMeta.textContent = `${visible} of ${total} teams match`; return; }
+  filterMeta.textContent = `${total} teams${state.activeListName ? ` — ${state.activeListName}` : ''}`;
 }
 
 // ─── Detail Modal ─────────────────────────────────────────────────────────────
 function showDetailModal(team, rank) {
-  $('detail-modal-title').textContent = `Team ${team.num}`;
-  const body = $('detail-modal-body');
-  const fmt = v => (v === null || v === undefined) ? '—' : (+v).toFixed(2);
+  $('modalTeamTitle').textContent = `Team ${team.num}`;
+  const body = $('teamModalBody');
+  const f    = v => fmt(v, 2) ?? '—';
 
   body.innerHTML = `
     <div class="detail-team-header">
@@ -473,38 +679,38 @@ function showDetailModal(team, rank) {
         <div class="detail-team-num">${team.num}</div>
         <div class="detail-team-name">${esc(team.name)}</div>
       </div>
-      <div class="detail-team-rank"># ${rank}</div>
+      <div class="detail-team-rank">#${rank} Overall</div>
     </div>
     <div class="detail-grid">
       <div class="detail-card">
-        <div class="detail-card-label">Composite Score</div>
-        <div class="detail-card-val purple">${team.score.toFixed(1)}</div>
-      </div>
-      <div class="detail-card">
         <div class="detail-card-label">EPA Total</div>
-        <div class="detail-card-val teal">${fmt(team.epa)}</div>
+        <div class="detail-card-val teal">${f(team.epa)}</div>
       </div>
       <div class="detail-card">
         <div class="detail-card-label">OPR</div>
-        <div class="detail-card-val" style="color:#c9a0f8">${fmt(team.opr)}</div>
+        <div class="detail-card-val" style="color:#c9a0f8">${f(team.opr)}</div>
       </div>
       <div class="detail-card">
         <div class="detail-card-label">Auto EPA</div>
-        <div class="detail-card-val green">${fmt(team.auto)}</div>
+        <div class="detail-card-val green">${f(team.auto)}</div>
       </div>
       <div class="detail-card">
         <div class="detail-card-label">Teleop EPA</div>
-        <div class="detail-card-val" style="color:#7eb8f7">${fmt(team.teleop)}</div>
+        <div class="detail-card-val" style="color:#7eb8f7">${f(team.teleop)}</div>
       </div>
       <div class="detail-card">
         <div class="detail-card-label">Endgame EPA</div>
-        <div class="detail-card-val yellow">${fmt(team.endgame)}</div>
+        <div class="detail-card-val yellow">${f(team.endgame)}</div>
       </div>
     </div>
-    ${team.notes ? `<div style="margin-top:8px;padding:10px 14px;background:var(--bg-card);border:1px solid var(--border);border-radius:var(--radius-sm);font-size:13px;color:var(--text-secondary)"><strong style="color:var(--text-muted);font-size:10px;text-transform:uppercase;letter-spacing:.06em">Notes</strong><div style="margin-top:4px">${esc(team.notes)}</div></div>` : ''}
+    ${team.notes ? `
+      <div style="margin-top:14px;padding:10px 14px;background:var(--bg-card);border:1px solid var(--border);border-radius:var(--radius-sm)">
+        <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--text-muted);margin-bottom:5px">Notes</div>
+        <div style="font-size:13px;color:var(--text-secondary);line-height:1.6">${esc(team.notes)}</div>
+      </div>` : ''}
   `;
 
-  $('detail-modal').style.display = 'flex';
+  $('teamModal').style.display = 'flex';
 }
 
 // ─── Sorting ──────────────────────────────────────────────────────────────────
@@ -517,34 +723,41 @@ function sortBy(col) {
   }
 
   const mult = state.sortAsc ? 1 : -1;
-  const key  = { team: 'num', score: 'score', epa: 'epa', opr: 'opr', auto: 'auto', teleop: 'teleop', endgame: 'endgame' }[col] || col;
+  const colToField = { team: 'num', score: 'score', epa: 'epa', opr: 'opr', auto: 'auto', teleop: 'teleop', endgame: 'endgame' };
+  const field = colToField[col] || col;
 
   state.teams.sort((a, b) => {
-    const av = a[key] ?? -Infinity;
-    const bv = b[key] ?? -Infinity;
+    const av = a[field] ?? -Infinity;
+    const bv = b[field] ?? -Infinity;
     return (av < bv ? -1 : av > bv ? 1 : 0) * mult;
   });
 
-  // Update header arrows
-  document.querySelectorAll('.sortable-col').forEach(el => {
-    el.classList.remove('active-sort');
-    el.querySelector('.sort-arrow').textContent = '';
-  });
-  const activeCol = document.querySelector(`.sortable-col[data-col="${col}"]`);
-  if (activeCol) {
-    activeCol.classList.add('active-sort');
-    activeCol.querySelector('.sort-arrow').textContent = state.sortAsc ? '↑' : '↓';
-  }
-
   renderTeams();
+  updateSortArrows();
 }
 
-// ─── Sortable drag-and-drop ────────────────────────────────────────────────────
+function updateSortArrows() {
+  document.querySelectorAll('.sortable').forEach(th => {
+    th.classList.remove('active-sort');
+    const arrow = th.querySelector('.sort-arrow');
+    if (arrow) arrow.textContent = '';
+  });
+  const activeEl = document.querySelector(`.sortable[data-col="${state.sortCol}"]`);
+  if (activeEl) {
+    activeEl.classList.add('active-sort');
+    const arrow = activeEl.querySelector('.sort-arrow');
+    if (arrow) arrow.textContent = state.sortAsc ? ' ↑' : ' ↓';
+  }
+}
+
+// ─── Drag-and-drop (SortableJS) ───────────────────────────────────────────────
 let sortableInstance = null;
 
 function initSortable() {
-  if (sortableInstance) sortableInstance.destroy();
-  sortableInstance = Sortable.create(teamList, {
+  if (sortableInstance) { sortableInstance.destroy(); sortableInstance = null; }
+  if (typeof Sortable === 'undefined') return;
+
+  sortableInstance = Sortable.create(picklistBody, {
     animation: 150,
     handle: '.drag-handle',
     ghostClass: 'sortable-ghost',
@@ -552,9 +765,14 @@ function initSortable() {
     onEnd(evt) {
       const { oldIndex, newIndex } = evt;
       if (oldIndex === newIndex) return;
+      // Move in state.teams to match new DOM order
       const moved = state.teams.splice(oldIndex, 1)[0];
       state.teams.splice(newIndex, 0, moved);
-      renderTeams();
+      // Renumber rank cells
+      Array.from(picklistBody.querySelectorAll('tr')).forEach((tr, i) => {
+        const rankEl = tr.querySelector('.row-rank');
+        if (rankEl) rankEl.textContent = i + 1;
+      });
       autoSave();
     },
   });
@@ -564,40 +782,47 @@ function initSortable() {
 function copyToDiscord() {
   const available = state.teams.filter(t => !t.picked && !t.pick1 && !t.pick2);
   if (!available.length) {
-    showToast('No unpicked teams to copy', 'info');
+    showToast('No unpicked teams to copy.', 'info');
     return;
   }
-
   const lines = available.map((t, i) => `${i + 1}. ${t.num}`).join('\n');
   const text  = `📋 **Draft Picklist**\n${lines}`;
 
-  navigator.clipboard.writeText(text).then(() => {
-    showToast('✓ Copied to clipboard!', 'success');
-  }).catch(() => {
-    // Fallback
-    const ta = document.createElement('textarea');
-    ta.value = text;
-    ta.style.position = 'fixed';
-    ta.style.opacity  = '0';
-    document.body.appendChild(ta);
-    ta.select();
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(text)
+      .then(() => showToast('✓ Copied to clipboard!', 'success'))
+      .catch(() => fallbackCopy(text));
+  } else {
+    fallbackCopy(text);
+  }
+}
+
+function fallbackCopy(text) {
+  const ta = document.createElement('textarea');
+  ta.value          = text;
+  ta.style.position = 'fixed';
+  ta.style.opacity  = '0';
+  document.body.appendChild(ta);
+  ta.focus();
+  ta.select();
+  try {
     document.execCommand('copy');
-    document.body.removeChild(ta);
     showToast('✓ Copied to clipboard!', 'success');
-  });
+  } catch (_) {
+    showToast('Could not copy — try manually.', 'error');
+  }
+  document.body.removeChild(ta);
 }
 
 // ─── Sidebar ──────────────────────────────────────────────────────────────────
 function openSidebar() {
   sidebar.classList.add('open');
-  sidebarBackdrop.classList.add('visible');
-  mainWrapper.classList.add('sidebar-open');
+  mainContent.classList.add('sidebar-open');
 }
 
 function closeSidebar() {
   sidebar.classList.remove('open');
-  sidebarBackdrop.classList.remove('visible');
-  mainWrapper.classList.remove('sidebar-open');
+  mainContent.classList.remove('sidebar-open');
 }
 
 function toggleSidebar() {
@@ -605,177 +830,160 @@ function toggleSidebar() {
 }
 
 // ─── Modals ───────────────────────────────────────────────────────────────────
-function openModal(id) { $(id).style.display = 'flex'; }
+function openModal(id)  { $(id).style.display = 'flex'; }
 function closeModal(id) { $(id).style.display = 'none'; }
 
-document.addEventListener('click', e => {
-  const closeBtn = e.target.closest('.modal-close');
-  if (closeBtn) {
-    const modalId = closeBtn.dataset.modal;
-    if (modalId) closeModal(modalId);
-  }
-  // Close modal on backdrop click
-  if (e.target.classList.contains('modal-backdrop')) {
-    e.target.style.display = 'none';
-  }
-});
-
-// ─── Loading ──────────────────────────────────────────────────────────────────
-function showLoading(msg = 'Loading…') {
-  loadingText.textContent = msg;
+// ─── Loading / Error UI ───────────────────────────────────────────────────────
+function showLoading(msg) {
+  loadingText.textContent = msg || 'Loading…';
   loadingOverlay.style.display = 'flex';
+}
+
+function updateLoadingText(msg) {
+  if (loadingText) loadingText.textContent = msg;
 }
 
 function hideLoading() {
   loadingOverlay.style.display = 'none';
 }
 
+function showError(msg) {
+  if (!errorBanner || !errorMsg) return;
+  errorMsg.textContent = msg;
+  errorBanner.style.display = 'flex';
+}
+
+function hideError() {
+  if (errorBanner) errorBanner.style.display = 'none';
+}
+
 // ─── Toast ────────────────────────────────────────────────────────────────────
 let toastTimer;
-function showToast(msg, type = '') {
+function showToast(msg, type) {
   toast.textContent = msg;
   toast.className   = 'toast' + (type ? ` toast-${type}` : '');
-  // force reflow
-  void toast.offsetWidth;
+  void toast.offsetWidth; // force reflow for re-animation
   toast.classList.add('show');
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => toast.classList.remove('show'), 3000);
+  toastTimer = setTimeout(() => toast.classList.remove('show'), 3200);
 }
 
 // ─── Utility ──────────────────────────────────────────────────────────────────
 function esc(str) {
   return String(str ?? '')
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;');
+    .replace(/&/g,  '&amp;')
+    .replace(/</g,  '&lt;')
+    .replace(/>/g,  '&gt;')
+    .replace(/"/g,  '&quot;')
+    .replace(/'/g,  '&#39;');
 }
 
 // ─── Event Bindings ───────────────────────────────────────────────────────────
 function bindEvents() {
-  // Sidebar toggle
-  $('sidebar-toggle').addEventListener('click', toggleSidebar);
-  $('sidebar-close').addEventListener('click', closeSidebar);
-  sidebarBackdrop.addEventListener('click', closeSidebar);
 
-  // Load data
-  $('load-data-btn').addEventListener('click', () => {
-    saveSettings();
-    fetchData();
+  // Sidebar open/close
+  $('sidebarToggleBtn').addEventListener('click', toggleSidebar);
+  $('sidebarCloseBtn').addEventListener('click',  closeSidebar);
+
+  // Load data button
+  $('loadDataBtn').addEventListener('click', () => {
     closeSidebar();
-  });
-
-  // Generate list (alias)
-  $('generate-btn').addEventListener('click', () => {
-    saveSettings();
     fetchData();
   });
 
-  $('empty-generate-btn').addEventListener('click', () => {
-    openSidebar();
+  // Generate list (header toolbar button)
+  $('generateBtn').addEventListener('click', () => fetchData());
+
+  // Empty-state generate button → open sidebar so user can configure
+  $('emptyGenerateBtn').addEventListener('click', () => openSidebar());
+
+  // Load from pasted team list
+  $('loadFromListBtn').addEventListener('click', () => {
+    closeSidebar();
+    fetchFromPastedList();
   });
 
-  // Recalculate weights
-  $('recalc-btn').addEventListener('click', () => {
-    state.weights.epa      = +$('w-epa').value;
-    state.weights.opr      = +$('w-opr').value;
-    state.weights.auto     = +$('w-auto').value;
-    state.weights.endgame  = +$('w-endgame').value;
+  // Recalculate scoring weights
+  $('recalcBtn').addEventListener('click', () => {
+    state.weights.epa     = +$('epaWeightSlider').value;
+    state.weights.opr     = +$('oprWeightSlider').value;
+    state.weights.auto    = +$('autoWeightSlider').value;
+    state.weights.endgame = +$('endgameWeightSlider').value;
     saveSettings();
     recalcAndRender();
-    showToast('Scores recalculated', 'success');
+    showToast('Scores recalculated ✓', 'success');
   });
 
-  // Weight slider live update
-  ['epa', 'opr', 'auto', 'endgame'].forEach(key => {
-    const slider = $(`w-${key}`);
-    const valEl  = $(`w-${key}-val`);
-    slider.addEventListener('input', () => {
-      valEl.textContent = slider.value;
-      state.weights[key] = +slider.value;
+  // Live slider label update
+  [
+    ['epaWeightSlider',     'epaWeightVal',     'epa'],
+    ['oprWeightSlider',     'oprWeightVal',     'opr'],
+    ['autoWeightSlider',    'autoWeightVal',    'auto'],
+    ['endgameWeightSlider', 'endgameWeightVal', 'endgame'],
+  ].forEach(([sliderId, valId, key]) => {
+    $(sliderId).addEventListener('input', () => {
+      const v = +$(sliderId).value;
+      $(valId).textContent = v;
+      state.weights[key]   = v;
     });
   });
 
-  // Reset order
-  $('reset-order-btn').addEventListener('click', () => {
+  // Reset order to EPA ranking
+  $('resetOrderBtn').addEventListener('click', () => {
     if (!state.teams.length) return;
-    calcScores(state.teams);
-    state.teams.sort((a, b) => b.score - a.score);
-    state.sortCol = 'score';
+    state.teams.sort((a, b) => (b.epa ?? -Infinity) - (a.epa ?? -Infinity));
+    state.sortCol = 'epa';
     state.sortAsc = false;
     renderTeams();
-    showToast('Order reset to score rank', 'info');
+    updateSortArrows();
+    showToast('Order reset to EPA ranking', 'info');
   });
 
   // Save list
-  $('save-list-btn').addEventListener('click', () => {
-    if (!state.teams.length) { showToast('Nothing to save', 'info'); return; }
-    $('list-name-input').value = state.activeListName || '';
-    openModal('save-modal');
-    setTimeout(() => $('list-name-input').focus(), 50);
+  $('saveListBtn').addEventListener('click', () => {
+    if (!state.teams.length) { showToast('Nothing to save — generate a list first.', 'info'); return; }
+    // Pre-fill list name
+    $('listNameInput').value = state.activeListName || '';
+    openSidebar();
+    $('listNameInput').focus();
+    $('listNameInput').select();
   });
 
-  $('confirm-save-btn').addEventListener('click', () => {
-    const name = $('list-name-input').value.trim();
-    if (!name) { showToast('Enter a list name', 'error'); return; }
-    saveCurrentList(name);
-    closeModal('save-modal');
-  });
-
-  $('list-name-input').addEventListener('keydown', e => {
-    if (e.key === 'Enter') $('confirm-save-btn').click();
-  });
-
-  // New list
-  $('new-list-btn').addEventListener('click', () => {
-    if (state.teams.length) {
-      openModal('new-list-modal');
-    } else {
-      clearList();
+  // New list button in sidebar — show a confirm if we have unsaved data
+  $('newListBtn').addEventListener('click', () => {
+    const name = $('listNameInput').value.trim();
+    if (!name) {
+      showToast('Enter a list name above first.', 'error');
+      $('listNameInput').focus();
+      return;
     }
+    if (state.savedLists[name] && !confirm(`"${name}" already exists. Overwrite?`)) return;
+    saveCurrentList(name);
   });
 
-  $('confirm-new-list-btn').addEventListener('click', () => {
-    clearList();
-    closeModal('new-list-modal');
-    closeSidebar();
-  });
-
-  function clearList() {
-    state.teams = [];
-    state.activeListName = null;
-    localStorage.removeItem(LS_ACTIVE);
-    currentListName.textContent = 'Unsaved List';
-    teamList.innerHTML = '';
-    emptyState.style.display   = '';
-    tableHeader.style.display  = 'none';
-    statsBar.style.display     = 'none';
-    eventBadge.style.display   = 'none';
-    renderSavedLists();
-  }
-
-  // Double pick mode
-  $('double-pick-btn').addEventListener('click', () => {
+  // Double-pick mode toggle
+  $('doublePickToggle').addEventListener('click', () => {
     state.doublePick = !state.doublePick;
     document.body.classList.toggle('double-pick-mode', state.doublePick);
-    $('double-pick-btn').classList.toggle('active', state.doublePick);
-    showToast(state.doublePick ? 'Double-pick mode ON' : 'Double-pick mode OFF', 'info');
+    $('doublePickToggle').classList.toggle('active', state.doublePick);
+    $('doublePickLabel').textContent = state.doublePick ? 'ON' : 'OFF';
+    showToast(`Double-pick mode ${state.doublePick ? 'enabled' : 'disabled'}`, 'info');
   });
 
-  // Show/hide picked
-  $('hide-picked-btn').addEventListener('click', () => {
+  // Toggle show/hide picked
+  $('togglePickedBtn').addEventListener('click', () => {
     state.showPicked = !state.showPicked;
-    $('hide-picked-btn').textContent = state.showPicked ? 'Hide Picked' : 'Show Picked';
-    $('hide-picked-btn').classList.toggle('active', !state.showPicked);
+    $('togglePickedBtn').textContent = state.showPicked ? 'Hide Picked' : 'Show Picked';
+    $('togglePickedBtn').classList.toggle('active', !state.showPicked);
     renderTeams();
   });
 
   // Copy to Discord
-  $('copy-discord-btn').addEventListener('click', copyToDiscord);
+  $('copyDiscordBtn').addEventListener('click', copyToDiscord);
 
   // Search
-  const searchInput = $('search-input');
-  const searchClear = $('search-clear');
+  const searchInput = $('searchInput');
+  const searchClear = $('searchClearBtn');
 
   searchInput.addEventListener('input', () => {
     state.searchQuery = searchInput.value;
@@ -787,38 +995,56 @@ function bindEvents() {
     searchInput.value = '';
     state.searchQuery = '';
     searchClear.style.display = 'none';
-    renderTeams();
     searchInput.focus();
+    renderTeams();
   });
 
-  // Column sort
-  document.querySelectorAll('.sortable-col').forEach(col => {
-    col.addEventListener('click', () => sortBy(col.dataset.col));
+  // Column sort (thead th.sortable)
+  document.querySelectorAll('.sortable').forEach(th => {
+    th.addEventListener('click', () => {
+      if (!state.teams.length) return;
+      sortBy(th.dataset.col);
+    });
+  });
+
+  // Team Detail Modal close
+  $('teamModalClose').addEventListener('click', () => closeModal('teamModal'));
+
+  // Error banner close
+  $('errorCloseBtn').addEventListener('click', hideError);
+
+  // Modal backdrop click to close
+  document.addEventListener('click', e => {
+    if (e.target.classList.contains('modal-backdrop')) {
+      e.target.style.display = 'none';
+    }
   });
 
   // Keyboard shortcuts
   document.addEventListener('keydown', e => {
+    // Escape: close any open modal or sidebar
     if (e.key === 'Escape') {
       document.querySelectorAll('.modal-backdrop').forEach(m => {
         if (m.style.display !== 'none') m.style.display = 'none';
       });
       if (sidebar.classList.contains('open')) closeSidebar();
     }
-    // Ctrl/Cmd + S → save
+    // Ctrl/Cmd + S → save list
     if ((e.ctrlKey || e.metaKey) && e.key === 's') {
       e.preventDefault();
-      $('save-list-btn').click();
+      $('saveListBtn').click();
     }
     // Ctrl/Cmd + F → focus search
     if ((e.ctrlKey || e.metaKey) && e.key === 'f') {
       e.preventDefault();
-      searchInput.focus();
-      searchInput.select();
+      const si = $('searchInput');
+      si.focus();
+      si.select();
     }
   });
 
-  // Open sidebar by default on desktop (>= 900px)
-  if (window.innerWidth >= 900) {
-    openSidebar();
-  }
+  // Persist TBA key on blur
+  $('tbaKeyInput').addEventListener('blur',   saveSettings);
+  $('eventKeyInput').addEventListener('blur', saveSettings);
+  $('yearSelect').addEventListener('change',  saveSettings);
 }

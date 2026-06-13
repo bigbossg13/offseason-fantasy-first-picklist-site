@@ -64,7 +64,7 @@
 
         <!-- Load Data -->
         <button class="btn btn-accent btn-block" id="loadDataBtn">
-          ↻ Load Data
+          ↻ Load Data from Event / Global
         </button>
 
         <div class="divider"></div>
@@ -102,6 +102,20 @@
 
         <button class="btn btn-secondary btn-block" id="recalcBtn">
           ★ Recalculate Scores
+        </button>
+
+        <div class="divider"></div>
+
+        <!-- Paste Team List -->
+        <p class="setting-section-title">Paste Team List</p>
+        <div class="setting-group">
+          <label class="setting-label" for="pasteTeamInput">Team Numbers</label>
+          <textarea class="setting-input paste-team-textarea" id="pasteTeamInput"
+            placeholder="Paste team numbers, one per line or comma-separated&#10;e.g.&#10;254&#10;1114&#10;118, 2056"></textarea>
+          <p class="setting-hint">Fetches EPA &amp; OPR for exactly these teams.</p>
+        </div>
+        <button class="btn btn-secondary btn-block" id="loadFromListBtn">
+          ↻ Load from Pasted List
         </button>
 
         <div class="divider"></div>
@@ -184,8 +198,7 @@
               <th class="col-drag"></th>
               <th class="col-rank">#</th>
               <th class="col-team sortable" data-col="team">Team <span class="sort-arrow"></span></th>
-              <th class="col-score sortable" data-col="score">Score <span class="sort-arrow"></span></th>
-              <th class="col-epa sortable" data-col="epa">EPA <span class="sort-arrow"></span></th>
+              <th class="col-epa sortable" data-col="epa">EPA Total <span class="sort-arrow">↓</span></th>
               <th class="col-opr sortable" data-col="opr">OPR <span class="sort-arrow"></span></th>
               <th class="col-auto sortable" data-col="auto">Auto <span class="sort-arrow"></span></th>
               <th class="col-teleop sortable" data-col="teleop">Teleop <span class="sort-arrow"></span></th>
