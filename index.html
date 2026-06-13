@@ -1,0 +1,231 @@
+<!DOCTYPE html>
+<!-- index.html — Main entry point for the Offseason Fantasy FRC Draft Board app.
+     Hosted on GitHub Pages. Loads Google Fonts, SortableJS, styles.css, and app.js.
+     All state is managed in app.js; no build tools or frameworks required. -->
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="description" content="Offseason Fantasy FRC Drafting Picklist Generator — rank teams by EPA and OPR for your fantasy draft." />
+  <meta name="theme-color" content="#1a1d2e" />
+  <title>Draft Board — Fantasy FRC Picklist</title>
+
+  <!-- Google Fonts: Inter -->
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet" />
+
+  <!-- SortableJS for drag-and-drop reordering -->
+  <script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.0/Sortable.min.js"></script>
+
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+
+  <!-- ===================== TOAST NOTIFICATION ===================== -->
+  <div id="toast" class="toast" aria-live="polite"></div>
+
+  <!-- ===================== APP SHELL ===================== -->
+  <div class="app-shell">
+
+    <!-- ===== SIDEBAR ===== -->
+    <aside class="sidebar" id="sidebar">
+      <div class="sidebar-header">
+        <span class="sidebar-title">⚙ Settings</span>
+        <button class="sidebar-close-btn" id="sidebarCloseBtn" title="Close sidebar">✕</button>
+      </div>
+
+      <div class="sidebar-body">
+
+        <!-- TBA API Key -->
+        <div class="setting-group">
+          <label class="setting-label" for="tbaKeyInput">TBA API Key</label>
+          <input class="setting-input" type="password" id="tbaKeyInput" placeholder="Paste your TBA key…" autocomplete="off" />
+          <p class="setting-hint">Get a free key at <a href="https://www.thebluealliance.com/account" target="_blank" rel="noopener">thebluealliance.com</a></p>
+        </div>
+
+        <!-- Event Key -->
+        <div class="setting-group">
+          <label class="setting-label" for="eventKeyInput">Event Key</label>
+          <input class="setting-input" type="text" id="eventKeyInput" placeholder="e.g. 2026carv" autocomplete="off" />
+          <p class="setting-hint">Leave blank to load global top teams.</p>
+        </div>
+
+        <!-- Year -->
+        <div class="setting-group">
+          <label class="setting-label" for="yearSelect">Year</label>
+          <select class="setting-input" id="yearSelect">
+            <option value="2026" selected>2026</option>
+            <option value="2025">2025</option>
+            <option value="2024">2024</option>
+            <option value="2023">2023</option>
+          </select>
+        </div>
+
+        <!-- Load Data -->
+        <button class="btn btn-accent btn-block" id="loadDataBtn">
+          ↻ Load Data
+        </button>
+
+        <div class="divider"></div>
+
+        <!-- Scoring Weights -->
+        <p class="setting-section-title">Scoring Weights</p>
+
+        <div class="setting-group">
+          <label class="setting-label" for="epaWeightSlider">
+            EPA Weight <span class="weight-value" id="epaWeightVal">60</span>
+          </label>
+          <input class="slider" type="range" id="epaWeightSlider" min="0" max="100" value="60" />
+        </div>
+
+        <div class="setting-group">
+          <label class="setting-label" for="oprWeightSlider">
+            OPR Weight <span class="weight-value" id="oprWeightVal">40</span>
+          </label>
+          <input class="slider" type="range" id="oprWeightSlider" min="0" max="100" value="40" />
+        </div>
+
+        <div class="setting-group">
+          <label class="setting-label" for="autoWeightSlider">
+            Auto Bonus <span class="weight-value" id="autoWeightVal">10</span>
+          </label>
+          <input class="slider" type="range" id="autoWeightSlider" min="0" max="100" value="10" />
+        </div>
+
+        <div class="setting-group">
+          <label class="setting-label" for="endgameWeightSlider">
+            Endgame Bonus <span class="weight-value" id="endgameWeightVal">10</span>
+          </label>
+          <input class="slider" type="range" id="endgameWeightSlider" min="0" max="100" value="10" />
+        </div>
+
+        <button class="btn btn-secondary btn-block" id="recalcBtn">
+          ★ Recalculate Scores
+        </button>
+
+        <div class="divider"></div>
+
+        <!-- Saved Lists -->
+        <p class="setting-section-title">Saved Lists</p>
+
+        <div class="setting-group">
+          <label class="setting-label" for="listNameInput">List Name</label>
+          <input class="setting-input" type="text" id="listNameInput" placeholder="My Picklist" autocomplete="off" />
+        </div>
+
+        <button class="btn btn-accent btn-block" id="newListBtn">+ New List</button>
+
+        <div id="savedListsContainer" class="saved-lists-container">
+          <!-- Saved list items injected here -->
+        </div>
+
+      </div><!-- /sidebar-body -->
+    </aside><!-- /sidebar -->
+
+    <!-- ===== MAIN CONTENT ===== -->
+    <main class="main-content" id="mainContent">
+
+      <!-- Header Bar -->
+      <header class="app-header">
+        <div class="header-left">
+          <button class="sidebar-toggle-btn" id="sidebarToggleBtn" title="Toggle settings">
+            <span class="hamburger"></span>
+            <span class="hamburger"></span>
+            <span class="hamburger"></span>
+          </button>
+          <div class="app-brand">
+            <span class="brand-icon">🏆</span>
+            <span class="brand-name">Draft Board</span>
+          </div>
+          <span class="event-badge" id="eventBadge">No event loaded</span>
+        </div>
+
+        <div class="header-right">
+          <button class="btn btn-sm btn-secondary" id="doublePickToggle" title="Toggle double-pick mode">
+            Double Pick: <span id="doublePickLabel">OFF</span>
+          </button>
+          <button class="btn btn-sm btn-secondary" id="togglePickedBtn">Hide Picked</button>
+          <button class="btn btn-sm btn-accent" id="generateBtn">⚙ Generate List</button>
+          <button class="btn btn-sm btn-secondary" id="resetOrderBtn">↻ Reset Order</button>
+          <button class="btn btn-sm btn-secondary" id="saveListBtn">💾 Save List</button>
+          <button class="btn btn-sm btn-teal" id="copyDiscordBtn">📋 Copy to Discord</button>
+        </div>
+      </header>
+
+      <!-- Search / Filter Bar -->
+      <div class="filter-bar">
+        <div class="search-wrapper">
+          <span class="search-icon">🔍</span>
+          <input class="search-input" type="text" id="searchInput" placeholder="Search by team number or name…" />
+          <button class="search-clear" id="searchClearBtn" title="Clear search">✕</button>
+        </div>
+        <div class="filter-meta" id="filterMeta">No data loaded</div>
+      </div>
+
+      <!-- Loading State -->
+      <div class="loading-overlay" id="loadingOverlay" style="display:none;">
+        <div class="spinner"></div>
+        <p class="loading-text" id="loadingText">Loading data…</p>
+      </div>
+
+      <!-- Error Banner -->
+      <div class="error-banner" id="errorBanner" style="display:none;">
+        <span class="error-icon">⚠</span>
+        <span id="errorMessage"></span>
+        <button class="error-close" id="errorCloseBtn">✕</button>
+      </div>
+
+      <!-- Picklist Table -->
+      <div class="table-wrapper" id="tableWrapper">
+        <table class="picklist-table" id="picklistTable" style="display:none;">
+          <thead>
+            <tr>
+              <th class="col-drag"></th>
+              <th class="col-rank">#</th>
+              <th class="col-team sortable" data-col="team">Team <span class="sort-arrow"></span></th>
+              <th class="col-score sortable" data-col="score">Score <span class="sort-arrow"></span></th>
+              <th class="col-epa sortable" data-col="epa">EPA <span class="sort-arrow"></span></th>
+              <th class="col-opr sortable" data-col="opr">OPR <span class="sort-arrow"></span></th>
+              <th class="col-auto sortable" data-col="auto">Auto <span class="sort-arrow"></span></th>
+              <th class="col-teleop sortable" data-col="teleop">Teleop <span class="sort-arrow"></span></th>
+              <th class="col-endgame sortable" data-col="endgame">Endgame <span class="sort-arrow"></span></th>
+              <th class="col-notes">Notes</th>
+              <th class="col-actions">Actions</th>
+            </tr>
+          </thead>
+          <tbody id="picklistBody">
+            <!-- Team rows injected by app.js -->
+          </tbody>
+        </table>
+
+        <!-- Empty state -->
+        <div class="empty-state" id="emptyState">
+          <div class="empty-icon">🏆</div>
+          <h2>No Teams Loaded</h2>
+          <p>Open settings, enter your TBA API key and optional event key, then click <strong>Load Data</strong> or <strong>Generate List</strong>.</p>
+          <button class="btn btn-accent" id="emptyGenerateBtn">⚙ Generate List</button>
+        </div>
+      </div>
+
+    </main><!-- /main-content -->
+  </div><!-- /app-shell -->
+
+  <!-- ===================== MODALS ===================== -->
+
+  <!-- Team Detail Modal -->
+  <div class="modal-backdrop" id="teamModal" style="display:none;">
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="modalTeamTitle">
+      <div class="modal-header">
+        <h2 id="modalTeamTitle">Team Details</h2>
+        <button class="modal-close" id="teamModalClose">✕</button>
+      </div>
+      <div class="modal-body" id="teamModalBody">
+        <!-- Injected dynamically -->
+      </div>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
