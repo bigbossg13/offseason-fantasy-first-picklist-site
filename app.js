@@ -344,21 +344,12 @@ async function fetchEventName(eventKey, tbaKey) {
 // ─── Extract EPA fields from a team_year API response (handles multiple API shapes) ──
 function extractEpa(d) {
   if (!d) return { epa: null, auto: null, teleop: null, endgame: null };
-  // Statbotics v3 team_year: epa.total_points.mean / epa.auto.mean / epa.teleop.mean / epa.endgame.mean
-  // Fallback for breakdown sub-object naming
-  const epa     = d?.epa?.total_points?.mean
-                ?? d?.epa?.breakdown?.total_points?.mean
-                ?? d?.total_points_epa
-                ?? null;
-  const auto    = d?.epa?.auto?.mean
-                ?? d?.epa?.breakdown?.auto_points?.mean
-                ?? null;
-  const teleop  = d?.epa?.teleop?.mean
-                ?? d?.epa?.breakdown?.teleop_points?.mean
-                ?? null;
-  const endgame = d?.epa?.endgame?.mean
-                ?? d?.epa?.breakdown?.endgame_points?.mean
-                ?? null;
+  // Statbotics v3: epa.total_points is a direct number; breakdown sub-fields likewise
+  const epa     = typeof d?.epa?.total_points === 'number' ? d.epa.total_points
+                : d?.epa?.breakdown?.total_points ?? null;
+  const auto    = d?.epa?.breakdown?.auto_points    ?? null;
+  const teleop  = d?.epa?.breakdown?.teleop_points  ?? null;
+  const endgame = d?.epa?.breakdown?.endgame_points ?? null;
   return { epa, auto, teleop, endgame };
 }
 
