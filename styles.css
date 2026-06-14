@@ -17,7 +17,8 @@
   --accent-purple-h:   #9d7de0;
   --accent-teal:       #4ecdc4;
   --accent-teal-h:     #66dbd3;
-  --accent-green:      #2ecc71;
+  --accent-green:      #27ae60;
+  --accent-green-h:    #2ecc71;
   --accent-red:        #e74c3c;
   --accent-yellow:     #f39c12;
   --accent-orange:     #e67e22;
@@ -38,6 +39,7 @@
   --shadow-card:       0 4px 20px rgba(0,0,0,0.4);
   --shadow-glow-p:     0 0 20px rgba(124,92,191,0.35);
   --shadow-glow-t:     0 0 20px rgba(78,205,196,0.3);
+  --shadow-glow-g:     0 0 20px rgba(46,204,113,0.3);
   --transition:        0.18s ease;
 }
 
@@ -386,6 +388,16 @@ input, select, textarea { font-family: inherit; }
   box-shadow: var(--shadow-glow-t);
 }
 
+.btn-green {
+  background: var(--accent-green);
+  color: #fff;
+  font-weight: 700;
+}
+.btn-green:hover:not(:disabled) {
+  background: var(--accent-green-h);
+  box-shadow: var(--shadow-glow-g);
+}
+
 .btn-secondary {
   background: var(--bg-card);
   color: var(--text-secondary);
@@ -488,7 +500,7 @@ input, select, textarea { font-family: inherit; }
   color: var(--text-primary);
   letter-spacing: -0.5px;
 }
-.brand-accent { color: var(--accent-purple-h); }
+.brand-accent { color: var(--accent-green-h); }
 
 .event-badge {
   background: rgba(78,205,196,0.1);
@@ -1375,65 +1387,126 @@ body.double-pick-mode .dpick-wrap { display: flex; }
 /* =====================================================================
    NEXT PICK MODAL
    ===================================================================== */
-.modal-wide { max-width: 700px; width: 95vw; }
+.modal-wide {
+  max-width: 900px;
+  width: 96vw;
+  max-height: 92vh;
+}
+.modal-wide .modal-body {
+  overflow-y: auto;
+  max-height: calc(92vh - 80px);
+  padding: 16px 20px 24px;
+}
 
 .np-subtitle {
-  font-size: 12px;
+  font-size: 11px;
   color: var(--text-muted);
-  margin: 0 0 12px;
+  margin: 0 0 16px;
   text-transform: uppercase;
-  letter-spacing: .05em;
+  letter-spacing: .07em;
 }
 
-.np-table {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: 13px;
-}
-.np-table thead th {
-  text-align: left;
-  padding: 6px 10px;
-  font-size: 11px;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: .06em;
+.np-empty {
+  text-align: center;
   color: var(--text-muted);
-  border-bottom: 1px solid var(--border);
+  padding: 40px 0;
+  font-size: 16px;
 }
-.np-table tbody tr {
-  border-bottom: 1px solid rgba(255,255,255,0.04);
-  transition: background .15s;
+
+.np-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
 }
-.np-table tbody tr:hover { background: var(--bg-card); }
-.np-rank {
-  padding: 8px 10px;
-  color: var(--text-muted);
-  font-size: 12px;
-  font-weight: 600;
-  width: 36px;
-}
-.np-team {
-  padding: 8px 10px;
+
+.np-card {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 16px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 14px 20px;
+  transition: background var(--transition), border-color var(--transition);
 }
-.np-num {
+.np-card:hover {
+  background: var(--bg-card-hover);
+  border-color: var(--accent-green);
+}
+
+.np-card-rank {
+  font-size: 15px;
   font-weight: 700;
-  font-size: 14px;
-  color: var(--text-primary);
-  min-width: 42px;
-}
-.np-name {
-  font-size: 12px;
-  color: var(--text-secondary);
-}
-.np-stat {
-  padding: 8px 10px;
-  font-size: 13px;
-  font-weight: 600;
+  color: var(--text-muted);
+  min-width: 38px;
   text-align: right;
 }
+
+.np-card-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.np-card-num {
+  font-size: 28px;
+  font-weight: 800;
+  color: var(--text-primary);
+  line-height: 1.1;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.np-card-name {
+  font-size: 14px;
+  color: var(--text-secondary);
+  margin-top: 2px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.np-card-stats {
+  display: flex;
+  gap: 20px;
+  flex-shrink: 0;
+}
+
+.np-card-stat {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  min-width: 52px;
+}
+
+.np-card-stat-label {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .07em;
+  color: var(--text-muted);
+}
+
+.np-card-stat-val {
+  font-size: 20px;
+  font-weight: 700;
+  line-height: 1.2;
+}
+
+.np-epa    { color: var(--accent-teal); }
+.np-auto   { color: var(--accent-green-h); }
+.np-teleop { color: #7eb8f7; }
+.np-end    { color: var(--accent-yellow); }
+
+.np-badge {
+  font-size: 11px;
+  font-weight: 800;
+  padding: 2px 7px;
+  border-radius: 4px;
+  vertical-align: middle;
+}
+.np-p1 { background: rgba(124,92,191,0.3); color: var(--accent-purple-h); }
+.np-p2 { background: rgba(78,205,196,0.2); color: var(--accent-teal); }
 
 /* =====================================================================
    UTILITY

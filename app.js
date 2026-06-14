@@ -244,33 +244,10 @@ async function fetchData() {
       });
     }
 
-    // ── TBA OPR (optional, only for events with a key + TBA key) ────────────
-    if (eventKey && tbaKey) {
-      updateLoadingText('Fetching TBA OPR data…');
-      try {
-        const tbaResp = await fetch(
-          `${TBA_BASE}/event/${encodeURIComponent(eventKey)}/oprs`,
-          { headers: { 'X-TBA-Auth-Key': tbaKey } }
-        );
-        if (tbaResp.ok) {
-          const tbaData = await tbaResp.json();
-          const oprs = tbaData.oprs || {};
-          for (const [key, val] of Object.entries(oprs)) {
-            const num = parseInt(key.replace('frc', ''), 10);
-            if (!isNaN(num)) oprMap[num] = val;
-          }
-        } else if (tbaResp.status === 401) {
-          showToast('TBA API key is invalid — OPR skipped.', 'error');
-        } else if (tbaResp.status === 404) {
-          showToast(`Event "${eventKey}" not found on TBA — OPR skipped.`, 'info');
-        } else {
-          showToast(`TBA returned ${tbaResp.status} — OPR skipped.`, 'info');
-        }
-      } catch (tbaErr) {
-        showToast('Could not reach TBA API — OPR data skipped.', 'info');
-      }
-    } else if (eventKey && !tbaKey) {
-      showToast('No TBA API key — OPR data unavailable. Enter your key in settings.', 'info');
+    // ── TBA OPR ──────────────────────────────────────────────────────────────
+    if (tbaKey) {
+      const teamNums = Object.keys(epaMap).map(Number);
+      Object.assign(oprMap, await fetchOprForTeams(teamNums, year, eventKey, tbaKey));
     }
 
     // ── Build team array ─────────────────────────────────────────────────────
@@ -428,6 +405,57 @@ async function refreshEpaForCurrentList() {
   await loadTeamsFromNums(nums, preserved);
 }
 
+// ─── Fetch OPR for a list of teams — uses event key if provided, otherwise
+//     falls back to each team's most recent event for the given year ───────────
+async function fetchOprForTeams(nums, year, eventKey, tbaKey) {
+  const headers = { 'X-TBA-Auth-Key': tbaKey };
+  const oprMap  = {};
+
+  // Helper: fetch OPR from a specific TBA event and populate oprMap
+  async function pullOprFromEvent(key) {
+    try {
+      const r = await fetch(`${TBA_BASE}/event/${encodeURIComponent(key)}/oprs`, { headers });
+      if (!r.ok) return;
+      const d = await r.json();
+      for (const [teamKey, val] of Object.entries(d.oprs || {})) {
+        const n = parseInt(teamKey.replace('frc', ''), 10);
+        if (!isNaN(n) && oprMap[n] == null) oprMap[n] = val;
+      }
+    } catch (_) {}
+  }
+
+  if (eventKey) {
+    updateLoadingText('Fetching TBA OPR data…');
+    await pullOprFromEvent(eventKey);
+  } else {
+    // No event key: get each team's event list and pull OPR from their last event
+    updateLoadingText('Fetching OPR from last events…');
+    const teamEventLists = await Promise.allSettled(
+      nums.map(num =>
+        fetch(`${TBA_BASE}/team/frc${num}/events/${year}/simple`, { headers })
+          .then(r => r.ok ? r.json() : [])
+          .catch(() => [])
+      )
+    );
+
+    // Collect unique event keys from the most recent completed event per team
+    const now = Date.now();
+    const neededEvents = new Set();
+    teamEventLists.forEach((res, i) => {
+      if (res.status !== 'fulfilled') return;
+      const events = res.value.filter(e => e.event_type !== 99 && new Date(e.end_date).getTime() <= now);
+      if (!events.length) return;
+      events.sort((a, b) => new Date(b.end_date) - new Date(a.end_date));
+      neededEvents.add(events[0].key);
+    });
+
+    await Promise.allSettled([...neededEvents].map(pullOprFromEvent));
+  }
+
+  console.log(`[TBA] OPR populated for ${Object.keys(oprMap).length} teams`);
+  return oprMap;
+}
+
 // ─── Core: fetch + build team list from an array of team numbers ───────────────
 async function loadTeamsFromNums(nums, preserve = {}) {
   const year     = $('yearSelect').value;
@@ -442,30 +470,8 @@ async function loadTeamsFromNums(nums, preserve = {}) {
     const sbResults = await fetchEpaForNums(nums, year);
 
     let oprMap = {};
-    if (eventKey && tbaKey) {
-      updateLoadingText('Fetching TBA OPR data…');
-      try {
-        const tbaResp = await fetch(
-          `${TBA_BASE}/event/${encodeURIComponent(eventKey)}/oprs`,
-          { headers: { 'X-TBA-Auth-Key': tbaKey } }
-        );
-        if (tbaResp.ok) {
-          const tbaData = await tbaResp.json();
-          for (const [key, val] of Object.entries(tbaData.oprs || {})) {
-            const n = parseInt(key.replace('frc', ''), 10);
-            if (!isNaN(n)) oprMap[n] = val;
-          }
-          console.log(`[TBA] OPR loaded for ${Object.keys(oprMap).length} teams`);
-        } else {
-          console.warn(`[TBA] OPR fetch failed: HTTP ${tbaResp.status}`);
-          showToast(`TBA OPR fetch failed (HTTP ${tbaResp.status}) — check your API key.`, 'error');
-        }
-      } catch (e) {
-        console.error('[TBA] OPR fetch error:', e);
-        showToast('Could not reach TBA — OPR skipped.', 'info');
-      }
-    } else if (tbaKey && !eventKey) {
-      showToast('OPR requires an event key. Enter one in settings to see OPR data.', 'info');
+    if (tbaKey) {
+      oprMap = await fetchOprForTeams(nums, year, eventKey, tbaKey);
     }
 
     const teams = [];
@@ -716,7 +722,6 @@ function showNextPickModal() {
     return;
   }
 
-  // Available teams in current board order
   const available = state.teams.filter(t => {
     if (state.doublePick) return !(t.pick1 && t.pick2);
     return !t.picked && !t.pick1 && !t.pick2;
@@ -725,43 +730,46 @@ function showNextPickModal() {
   const body = $('nextPickBody');
 
   if (!available.length) {
-    body.innerHTML = `<p style="text-align:center;color:var(--text-muted);padding:24px">All teams have been picked.</p>`;
+    body.innerHTML = `<p class="np-empty">All teams have been picked.</p>`;
     openModal('nextPickModal');
     return;
   }
 
-  const rows = available.slice(0, 20).map((t, i) => {
-    const rankInBoard = state.teams.indexOf(t) + 1;
-    const p1 = t.pick1 ? '<span class="pick1-badge" style="display:inline-block">P1</span>' : '';
-    const p2 = t.pick2 ? '<span class="pick2-badge" style="display:inline-block">P2</span>' : '';
+  const cards = available.slice(0, 15).map(t => {
+    const rank = state.teams.indexOf(t) + 1;
+    const p1tag = t.pick1 ? '<span class="np-badge np-p1">P1</span>' : '';
+    const p2tag = t.pick2 ? '<span class="np-badge np-p2">P2</span>' : '';
     return `
-      <tr>
-        <td class="np-rank">${rankInBoard}</td>
-        <td class="np-team">
-          <span class="np-num">${t.num}</span> ${p1}${p2}
-          <span class="np-name">${esc(t.name)}</span>
-        </td>
-        <td class="np-stat" style="color:var(--accent-teal)">${fmt(t.epa) ?? '—'}</td>
-        <td class="np-stat" style="color:var(--accent-green)">${fmt(t.auto) ?? '—'}</td>
-        <td class="np-stat" style="color:#7eb8f7">${fmt(t.teleop) ?? '—'}</td>
-        <td class="np-stat" style="color:var(--accent-yellow)">${fmt(t.endgame) ?? '—'}</td>
-      </tr>`;
+      <div class="np-card">
+        <div class="np-card-rank">#${rank}</div>
+        <div class="np-card-main">
+          <div class="np-card-num">${t.num} ${p1tag}${p2tag}</div>
+          <div class="np-card-name">${esc(t.name)}</div>
+        </div>
+        <div class="np-card-stats">
+          <div class="np-card-stat">
+            <span class="np-card-stat-label">EPA</span>
+            <span class="np-card-stat-val np-epa">${fmt(t.epa) ?? '—'}</span>
+          </div>
+          <div class="np-card-stat">
+            <span class="np-card-stat-label">Auto</span>
+            <span class="np-card-stat-val np-auto">${fmt(t.auto) ?? '—'}</span>
+          </div>
+          <div class="np-card-stat">
+            <span class="np-card-stat-label">Teleop</span>
+            <span class="np-card-stat-val np-teleop">${fmt(t.teleop) ?? '—'}</span>
+          </div>
+          <div class="np-card-stat">
+            <span class="np-card-stat-label">End</span>
+            <span class="np-card-stat-val np-end">${fmt(t.endgame) ?? '—'}</span>
+          </div>
+        </div>
+      </div>`;
   }).join('');
 
   body.innerHTML = `
-    <p class="np-subtitle">${available.length} available · showing top ${Math.min(available.length, 20)}</p>
-    <table class="np-table">
-      <thead>
-        <tr>
-          <th>#</th><th>Team</th>
-          <th style="color:var(--accent-teal)">EPA</th>
-          <th style="color:var(--accent-green)">Auto</th>
-          <th style="color:#7eb8f7">Teleop</th>
-          <th style="color:var(--accent-yellow)">Endgame</th>
-        </tr>
-      </thead>
-      <tbody>${rows}</tbody>
-    </table>`;
+    <p class="np-subtitle">${available.length} available · top ${Math.min(available.length, 15)} shown</p>
+    <div class="np-grid">${cards}</div>`;
 
   openModal('nextPickModal');
 }
