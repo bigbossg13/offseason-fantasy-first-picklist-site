@@ -195,6 +195,7 @@ function autoSave() {
 async function fetchData() {
   const tbaKey   = $('tbaKeyInput').value.trim();
   const eventKey = $('eventKeyInput').value.trim();
+  const year     = $('yearSelect').value;
 
   saveSettings();
   showLoading('Fetching Statbotics EPA data…');
@@ -415,7 +416,7 @@ async function fetchOprForTeams(nums, year, eventKey, tbaKey) {
   async function pullOprFromEvent(key) {
     try {
       const r = await fetch(`${TBA_BASE}/event/${encodeURIComponent(key)}/oprs`, { headers });
-      if (!r.ok) return;
+      if (!r.ok) { console.warn(`[TBA] OPR for event ${key} → HTTP ${r.status}`); return; }
       const d = await r.json();
       for (const [teamKey, val] of Object.entries(d.oprs || {})) {
         const n = parseInt(teamKey.replace('frc', ''), 10);
@@ -430,11 +431,12 @@ async function fetchOprForTeams(nums, year, eventKey, tbaKey) {
   } else {
     // No event key: get each team's event list and pull OPR from their last event
     updateLoadingText('Fetching OPR from last events…');
+    console.log(`[TBA] Fetching event lists for ${nums.length} teams (year ${year})…`);
     const teamEventLists = await Promise.allSettled(
       nums.map(num =>
         fetch(`${TBA_BASE}/team/frc${num}/events/${year}/simple`, { headers })
-          .then(r => r.ok ? r.json() : [])
-          .catch(() => [])
+          .then(r => { if (!r.ok) console.warn(`[TBA] Events for ${num} → HTTP ${r.status}`); return r.ok ? r.json() : []; })
+          .catch(e => { console.error(`[TBA] Events for ${num} error:`, e); return []; })
       )
     );
 
@@ -449,6 +451,7 @@ async function fetchOprForTeams(nums, year, eventKey, tbaKey) {
       neededEvents.add(events[0].key);
     });
 
+    console.log(`[TBA] Fetching OPR from ${neededEvents.size} unique events:`, [...neededEvents]);
     await Promise.allSettled([...neededEvents].map(pullOprFromEvent));
   }
 
