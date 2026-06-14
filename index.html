@@ -142,6 +142,7 @@
           <span class="filter-meta" id="filterMeta">No data loaded</span>
         </div>
         <div class="toolbar-right">
+          <button class="btn btn-secondary" id="nextPickBtn">👁 Next Picks</button>
           <button class="btn btn-secondary" id="saveListBtn">💾 Save List</button>
           <button class="btn btn-teal" id="copyDiscordBtn">📋 Copy to Discord</button>
         </div>
@@ -195,6 +196,19 @@
   </div><!-- /app-shell -->
 
   <!-- ===================== MODALS ===================== -->
+
+  <!-- Next Pick Quick-Look Modal -->
+  <div class="modal-backdrop" id="nextPickModal" style="display:none;">
+    <div class="modal modal-wide" role="dialog" aria-modal="true" aria-labelledby="nextPickTitle">
+      <div class="modal-header">
+        <h2 id="nextPickTitle">Next Picks</h2>
+        <button class="modal-close" id="nextPickModalClose">✕</button>
+      </div>
+      <div class="modal-body" id="nextPickBody">
+        <!-- Injected dynamically -->
+      </div>
+    </div>
+  </div>
 
   <!-- Team Detail Modal -->
   <div class="modal-backdrop" id="teamModal" style="display:none;">

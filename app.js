@@ -455,8 +455,17 @@ async function loadTeamsFromNums(nums, preserve = {}) {
             const n = parseInt(key.replace('frc', ''), 10);
             if (!isNaN(n)) oprMap[n] = val;
           }
+          console.log(`[TBA] OPR loaded for ${Object.keys(oprMap).length} teams`);
+        } else {
+          console.warn(`[TBA] OPR fetch failed: HTTP ${tbaResp.status}`);
+          showToast(`TBA OPR fetch failed (HTTP ${tbaResp.status}) — check your API key.`, 'error');
         }
-      } catch (_) { /* OPR optional */ }
+      } catch (e) {
+        console.error('[TBA] OPR fetch error:', e);
+        showToast('Could not reach TBA — OPR skipped.', 'info');
+      }
+    } else if (tbaKey && !eventKey) {
+      showToast('OPR requires an event key. Enter one in settings to see OPR data.', 'info');
     }
 
     const teams = [];
@@ -534,13 +543,17 @@ function renderTeams() {
 
   state.teams.forEach((team, idx) => {
     const isMatch  = !q || String(team.num).includes(q) || team.name.toLowerCase().includes(q);
+    // In double-pick mode a team is only "fully picked" once BOTH P1 and P2 are set
+    const fullyPicked = state.doublePick
+      ? (team.pick1 && team.pick2)
+      : (team.picked || team.pick1 || team.pick2);
     const isPicked = team.picked || team.pick1 || team.pick2;
-    const hide     = !isMatch || (!state.showPicked && isPicked);
+    const hide     = !isMatch || (!state.showPicked && fullyPicked);
 
     const tr = document.createElement('tr');
     tr.dataset.num = team.num;
     tr.className = [
-      isPicked && !team.pick1 && !team.pick2 ? 'picked' : '',
+      team.picked ? 'picked' : '',
       team.pick1 ? 'double-picked-1' : '',
       team.pick2 ? 'double-picked-2' : '',
       hide ? 'hidden-row' : '',
@@ -598,19 +611,19 @@ function renderTeams() {
       autoSave();
     });
 
-    // Double pick P1
+    // Double pick P1 — independent of P2 so both can be active simultaneously
     tr.querySelector('.dpick-btn.p1').addEventListener('click', () => {
       team.pick1 = !team.pick1;
-      if (team.pick1) { team.picked = false; team.pick2 = false; }
+      if (team.pick1) team.picked = false;
       renderTeams();
       updateStats();
       autoSave();
     });
 
-    // Double pick P2
+    // Double pick P2 — independent of P1
     tr.querySelector('.dpick-btn.p2').addEventListener('click', () => {
       team.pick2 = !team.pick2;
-      if (team.pick2) { team.picked = false; team.pick1 = false; }
+      if (team.pick2) team.picked = false;
       renderTeams();
       updateStats();
       autoSave();
@@ -694,6 +707,63 @@ function updateFilterMeta() {
   if (!total)    { filterMeta.textContent = 'No data loaded'; return; }
   if (q)         { filterMeta.textContent = `${visible} of ${total} teams match`; return; }
   filterMeta.textContent = `${total} teams${state.activeListName ? ` — ${state.activeListName}` : ''}`;
+}
+
+// ─── Next Pick Quick-Look Modal ───────────────────────────────────────────────
+function showNextPickModal() {
+  if (!state.teams.length) {
+    showToast('No teams loaded yet.', 'info');
+    return;
+  }
+
+  // Available teams in current board order
+  const available = state.teams.filter(t => {
+    if (state.doublePick) return !(t.pick1 && t.pick2);
+    return !t.picked && !t.pick1 && !t.pick2;
+  });
+
+  const body = $('nextPickBody');
+
+  if (!available.length) {
+    body.innerHTML = `<p style="text-align:center;color:var(--text-muted);padding:24px">All teams have been picked.</p>`;
+    openModal('nextPickModal');
+    return;
+  }
+
+  const rows = available.slice(0, 20).map((t, i) => {
+    const rankInBoard = state.teams.indexOf(t) + 1;
+    const p1 = t.pick1 ? '<span class="pick1-badge" style="display:inline-block">P1</span>' : '';
+    const p2 = t.pick2 ? '<span class="pick2-badge" style="display:inline-block">P2</span>' : '';
+    return `
+      <tr>
+        <td class="np-rank">${rankInBoard}</td>
+        <td class="np-team">
+          <span class="np-num">${t.num}</span> ${p1}${p2}
+          <span class="np-name">${esc(t.name)}</span>
+        </td>
+        <td class="np-stat" style="color:var(--accent-teal)">${fmt(t.epa) ?? '—'}</td>
+        <td class="np-stat" style="color:var(--accent-green)">${fmt(t.auto) ?? '—'}</td>
+        <td class="np-stat" style="color:#7eb8f7">${fmt(t.teleop) ?? '—'}</td>
+        <td class="np-stat" style="color:var(--accent-yellow)">${fmt(t.endgame) ?? '—'}</td>
+      </tr>`;
+  }).join('');
+
+  body.innerHTML = `
+    <p class="np-subtitle">${available.length} available · showing top ${Math.min(available.length, 20)}</p>
+    <table class="np-table">
+      <thead>
+        <tr>
+          <th>#</th><th>Team</th>
+          <th style="color:var(--accent-teal)">EPA</th>
+          <th style="color:var(--accent-green)">Auto</th>
+          <th style="color:#7eb8f7">Teleop</th>
+          <th style="color:var(--accent-yellow)">Endgame</th>
+        </tr>
+      </thead>
+      <tbody>${rows}</tbody>
+    </table>`;
+
+  openModal('nextPickModal');
 }
 
 // ─── Detail Modal ─────────────────────────────────────────────────────────────
@@ -1011,6 +1081,10 @@ function bindEvents() {
       sortBy(th.dataset.col);
     });
   });
+
+  // Next pick modal
+  $('nextPickBtn').addEventListener('click', showNextPickModal);
+  $('nextPickModalClose').addEventListener('click', () => closeModal('nextPickModal'));
 
   // Team Detail Modal close
   $('teamModalClose').addEventListener('click', () => closeModal('teamModal'));
