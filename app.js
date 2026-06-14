@@ -429,8 +429,9 @@ async function fetchOprForTeams(nums, year, eventKey, tbaKey) {
     updateLoadingText('Fetching TBA OPR data…');
     await pullOprFromEvent(eventKey);
   } else {
-    // No event key: get each team's event list and pull OPR from their last event
-    updateLoadingText('Fetching OPR from last events…');
+    // No event key: try ALL completed events for each team and pull OPR
+    // (championship events often lack OPR; district/regional events are reliable)
+    updateLoadingText('Fetching OPR from team events…');
     console.log(`[TBA] Fetching event lists for ${nums.length} teams (year ${year})…`);
     const teamEventLists = await Promise.allSettled(
       nums.map(num =>
@@ -440,18 +441,20 @@ async function fetchOprForTeams(nums, year, eventKey, tbaKey) {
       )
     );
 
-    // Collect unique event keys from the most recent completed event per team
+    // Collect ALL completed non-offseason events, sorted newest-first per team
+    // Try each event until we get OPR for the team (champs often lack OPR)
     const now = Date.now();
     const neededEvents = new Set();
-    teamEventLists.forEach((res, i) => {
+    teamEventLists.forEach(res => {
       if (res.status !== 'fulfilled') return;
-      const events = res.value.filter(e => e.event_type !== 99 && new Date(e.end_date).getTime() <= now);
-      if (!events.length) return;
-      events.sort((a, b) => new Date(b.end_date) - new Date(a.end_date));
-      neededEvents.add(events[0].key);
+      const events = res.value
+        .filter(e => e.event_type !== 99 && new Date(e.end_date).getTime() <= now)
+        .sort((a, b) => new Date(b.end_date) - new Date(a.end_date));
+      events.forEach(e => neededEvents.add(e.key));
     });
 
     console.log(`[TBA] Fetching OPR from ${neededEvents.size} unique events:`, [...neededEvents]);
+    // Fetch all in parallel — pullOprFromEvent only writes if oprMap[n] is not yet set
     await Promise.allSettled([...neededEvents].map(pullOprFromEvent));
   }
 
