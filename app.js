@@ -247,8 +247,12 @@ async function fetchData() {
 
     // ── TBA OPR ──────────────────────────────────────────────────────────────
     if (tbaKey) {
-      const teamNums = Object.keys(epaMap).map(Number);
-      Object.assign(oprMap, await fetchOprForTeams(teamNums, year, eventKey, tbaKey));
+      try {
+        const teamNums = Object.keys(epaMap).map(Number);
+        Object.assign(oprMap, await fetchOprForTeams(teamNums, year, eventKey, tbaKey));
+      } catch (oprErr) {
+        console.warn('[TBA] OPR fetch failed, continuing without OPR:', oprErr);
+      }
     }
 
     // ── Build team array ─────────────────────────────────────────────────────
@@ -477,7 +481,11 @@ async function loadTeamsFromNums(nums, preserve = {}) {
 
     let oprMap = {};
     if (tbaKey) {
-      oprMap = await fetchOprForTeams(nums, year, eventKey, tbaKey);
+      try {
+        oprMap = await fetchOprForTeams(nums, year, eventKey, tbaKey);
+      } catch (oprErr) {
+        console.warn('[TBA] OPR fetch failed, continuing without OPR:', oprErr);
+      }
     }
 
     const teams = [];
@@ -529,7 +537,7 @@ async function loadTeamsFromNums(nums, preserve = {}) {
 
   } catch (err) {
     hideLoading();
-    console.error('[DraftBoard] fetchFromPastedList error:', err);
+    console.error('[DraftBoard] loadTeamsFromNums error:', err);
     showError(err.message);
     showToast(`Error: ${err.message}`, 'error');
   }
