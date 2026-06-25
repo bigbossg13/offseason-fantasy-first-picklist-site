@@ -337,18 +337,29 @@ function extractEpa(d) {
 
 // ─── Fetch EPA for a list of team numbers ─────────────────────────────────────
 async function fetchEpaForNums(nums, year) {
-  const results = await Promise.allSettled(
-    nums.map(num =>
-      fetch(`${STATBOTICS_BASE}/team_year/${num}/${year}`)
-        .then(r => {
-          if (!r.ok) { console.warn(`[Statbotics] ${num}/${year} → HTTP ${r.status}`); return null; }
-          return r.json();
-        })
-        .catch(e => { console.error(`[Statbotics] ${num}/${year} fetch error:`, e); return null; })
-    )
-  );
+  // Batch into groups of 10 to avoid Statbotics rate limits
+  const BATCH = 10;
+  const allResults = [];
 
-  const firstResult = results.find(r => r.status === 'fulfilled' && r.value !== null);
+  for (let i = 0; i < nums.length; i += BATCH) {
+    const chunk = nums.slice(i, i + BATCH);
+    updateLoadingText(`Fetching EPA… (${Math.min(i + BATCH, nums.length)}/${nums.length})`);
+    const chunkResults = await Promise.allSettled(
+      chunk.map(num =>
+        fetch(`${STATBOTICS_BASE}/team_year/${num}/${year}`)
+          .then(r => {
+            if (!r.ok) { console.warn(`[Statbotics] ${num}/${year} → HTTP ${r.status}`); return null; }
+            return r.json();
+          })
+          .catch(e => { console.error(`[Statbotics] ${num}/${year} fetch error:`, e); return null; })
+      )
+    );
+    allResults.push(...chunkResults);
+    // Small pause between batches to respect rate limits
+    if (i + BATCH < nums.length) await new Promise(res => setTimeout(res, 300));
+  }
+
+  const firstResult = allResults.find(r => r.status === 'fulfilled' && r.value !== null);
   if (firstResult) {
     console.log('[Statbotics] Sample team_year response:', JSON.stringify(firstResult.value, null, 2));
     console.log('[Statbotics] Extracted EPA fields:', extractEpa(firstResult.value));
@@ -356,7 +367,7 @@ async function fetchEpaForNums(nums, year) {
     console.warn('[Statbotics] All requests returned null for year', year);
   }
 
-  return results;
+  return allResults;
 }
 
 // ─── Paste-in Team List Fetch ─────────────────────────────────────────────────
