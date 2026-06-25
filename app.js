@@ -337,39 +337,23 @@ function extractEpa(d) {
 
 // ─── Fetch EPA for a list of team numbers ─────────────────────────────────────
 async function fetchEpaForNums(nums, year) {
-  async function tryYear(yr) {
-    return Promise.allSettled(
-      nums.map(num =>
-        fetch(`${STATBOTICS_BASE}/team_year/${num}/${yr}`)
-          .then(r => {
-            if (!r.ok) { console.warn(`[Statbotics] ${num}/${yr} → HTTP ${r.status}`); return null; }
-            return r.json();
-          })
-          .catch(e => { console.error(`[Statbotics] ${num}/${yr} fetch error:`, e); return null; })
-      )
-    );
-  }
+  const results = await Promise.allSettled(
+    nums.map(num =>
+      fetch(`${STATBOTICS_BASE}/team_year/${num}/${year}`)
+        .then(r => {
+          if (!r.ok) { console.warn(`[Statbotics] ${num}/${year} → HTTP ${r.status}`); return null; }
+          return r.json();
+        })
+        .catch(e => { console.error(`[Statbotics] ${num}/${year} fetch error:`, e); return null; })
+    )
+  );
 
-  let results = await tryYear(year);
   const firstResult = results.find(r => r.status === 'fulfilled' && r.value !== null);
   if (firstResult) {
     console.log('[Statbotics] Sample team_year response:', JSON.stringify(firstResult.value, null, 2));
-    const extracted = extractEpa(firstResult.value);
-    console.log('[Statbotics] Extracted EPA fields:', extracted);
+    console.log('[Statbotics] Extracted EPA fields:', extractEpa(firstResult.value));
   } else {
     console.warn('[Statbotics] All requests returned null for year', year);
-  }
-
-  const hasData = results.some(r => r.status === 'fulfilled' && extractEpa(r.value).epa != null);
-
-  if (!hasData && parseInt(year, 10) > 2018) {
-    const fallbackYear = parseInt(year, 10) - 1;
-    updateLoadingText(`No ${year} data — trying ${fallbackYear}…`);
-    results = await tryYear(fallbackYear);
-    const hasFallback = results.some(r => r.status === 'fulfilled' && extractEpa(r.value).epa != null);
-    if (hasFallback) {
-      showToast(`No ${year} EPA data found — showing ${fallbackYear} data instead`, 'info');
-    }
   }
 
   return results;
