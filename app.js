@@ -337,36 +337,67 @@ function extractEpa(d) {
 
 // ─── Fetch EPA for a list of team numbers ─────────────────────────────────────
 async function fetchEpaForNums(nums, year) {
-  // Batch into groups of 10 to avoid Statbotics rate limits
-  const BATCH = 10;
-  const allResults = [];
+  // First try: bulk fetch from /team_years?year= (one request, no rate limit issues)
+  updateLoadingText(`Fetching EPA for ${nums.length} teams…`);
+  try {
+    const bulkSet = new Set(nums.map(Number));
+    let bulkMap = {};
+    let offset = 0;
+    const PAGE = 1000;
 
-  for (let i = 0; i < nums.length; i += BATCH) {
-    const chunk = nums.slice(i, i + BATCH);
-    updateLoadingText(`Fetching EPA… (${Math.min(i + BATCH, nums.length)}/${nums.length})`);
-    const chunkResults = await Promise.allSettled(
-      chunk.map(num =>
-        fetch(`${STATBOTICS_BASE}/team_year/${num}/${year}`)
-          .then(r => {
-            if (!r.ok) { console.warn(`[Statbotics] ${num}/${year} → HTTP ${r.status}`); return null; }
-            return r.json();
-          })
-          .catch(e => { console.error(`[Statbotics] ${num}/${year} fetch error:`, e); return null; })
-      )
-    );
-    allResults.push(...chunkResults);
-    // Small pause between batches to respect rate limits
-    if (i + BATCH < nums.length) await new Promise(res => setTimeout(res, 300));
+    while (true) {
+      const r = await fetch(`${STATBOTICS_BASE}/team_years?year=${year}&limit=${PAGE}&offset=${offset}`);
+      if (!r.ok) break;
+      const page = await r.json();
+      if (!Array.isArray(page) || page.length === 0) break;
+      page.forEach(d => { if (bulkSet.has(d.team)) bulkMap[d.team] = d; });
+      if (page.length < PAGE) break;
+      offset += PAGE;
+    }
+
+    const found = Object.keys(bulkMap).length;
+    if (found > 0) {
+      console.log(`[Statbotics] Bulk fetch: ${found}/${nums.length} teams found for ${year}`);
+      // Return results in same order as nums, matching Promise.allSettled shape
+      return nums.map(num => ({
+        status: 'fulfilled',
+        value: bulkMap[num] ?? null,
+      }));
+    }
+    console.warn(`[Statbotics] Bulk /team_years returned 0 matches for year ${year} — falling back to per-team`);
+  } catch (e) {
+    console.warn('[Statbotics] Bulk fetch failed, falling back to per-team:', e);
   }
 
-  const firstResult = allResults.find(r => r.status === 'fulfilled' && r.value !== null);
+  // Fallback: sequential per-team requests with retry on 500
+  const delay = ms => new Promise(res => setTimeout(res, ms));
+  const fetchOne = async num => {
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        const r = await fetch(`${STATBOTICS_BASE}/team_year/${num}/${year}`);
+        if (r.ok) return r.json();
+        if (r.status !== 500) return null;
+        await delay(400 * (attempt + 1));
+      } catch { return null; }
+    }
+    console.warn(`[Statbotics] ${num}/${year} failed after 3 attempts`);
+    return null;
+  };
+
+  const allResults = [];
+  for (let i = 0; i < nums.length; i++) {
+    updateLoadingText(`Fetching EPA… (${i + 1}/${nums.length})`);
+    const val = await fetchOne(nums[i]);
+    allResults.push({ status: 'fulfilled', value: val });
+    if (i < nums.length - 1) await delay(120);
+  }
+
+  const firstResult = allResults.find(r => r.value !== null);
   if (firstResult) {
-    console.log('[Statbotics] Sample team_year response:', JSON.stringify(firstResult.value, null, 2));
     console.log('[Statbotics] Extracted EPA fields:', extractEpa(firstResult.value));
   } else {
     console.warn('[Statbotics] All requests returned null for year', year);
   }
-
   return allResults;
 }
 
